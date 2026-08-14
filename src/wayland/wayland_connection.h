@@ -33,6 +33,7 @@ struct wp_cursor_shape_manager_v1;
 struct ext_idle_notifier_v1;
 struct ext_idle_notification_v1;
 struct zwp_idle_inhibit_manager_v1;
+struct zwp_tablet_manager_v2;
 struct ext_background_effect_manager_v1;
 struct xdg_activation_v1;
 struct ext_session_lock_manager_v1;
@@ -310,6 +311,7 @@ private:
   zxdg_output_manager_v1* m_xdgOutputManager = nullptr;
   xdg_wm_base* m_xdgWmBase = nullptr;
   wp_cursor_shape_manager_v1* m_cursorShapeManager = nullptr;
+  zwp_tablet_manager_v2* m_tabletManager = nullptr;
   xdg_activation_v1* m_xdgActivation = nullptr;
   ext_session_lock_manager_v1* m_sessionLockManager = nullptr;
   ext_idle_notifier_v1* m_idleNotifier = nullptr;

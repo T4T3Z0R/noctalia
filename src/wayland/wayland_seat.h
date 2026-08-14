@@ -8,6 +8,7 @@
 #include <functional>
 #include <limits>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 struct wl_array;
@@ -16,6 +17,11 @@ struct wl_pointer;
 struct wl_seat;
 struct wl_surface;
 struct wl_touch;
+struct zwp_tablet_manager_v2;
+struct zwp_tablet_seat_v2;
+struct zwp_tablet_v2;
+struct zwp_tablet_tool_v2;
+struct zwp_tablet_pad_v2;
 struct wp_cursor_shape_manager_v1;
 struct wp_cursor_shape_device_v1;
 struct xkb_compose_state;
@@ -77,6 +83,7 @@ public:
 
   void bind(wl_seat* seat);
   void setCursorShapeManager(wp_cursor_shape_manager_v1* manager);
+  void setTabletManager(zwp_tablet_manager_v2* manager);
   void setPointerEventCallback(PointerEventCallback callback);
   void setKeyboardEventCallback(KeyboardEventCallback callback);
   void setKeyboardFocusCallback(KeyboardFocusCallback callback);
@@ -126,6 +133,28 @@ public:
   static void handleTouchFrame(void* data, wl_touch* touch);
   static void handleTouchCancel(void* data, wl_touch* touch);
 
+  // tablet-v2 listener entrypoints
+  static void handleTabletAdded(void* data, zwp_tablet_seat_v2* tabletSeat, zwp_tablet_v2* tablet);
+  static void handleTabletToolAdded(
+      void* data, zwp_tablet_seat_v2* tabletSeat, zwp_tablet_tool_v2* tool
+  );
+  static void handleTabletPadAdded(void* data, zwp_tablet_seat_v2* tabletSeat, zwp_tablet_pad_v2* pad);
+  static void handleTabletRemoved(void* data, zwp_tablet_v2* tablet);
+  static void handleTabletToolRemoved(void* data, zwp_tablet_tool_v2* tool);
+  static void handleTabletToolProximityIn(
+      void* data, zwp_tablet_tool_v2* tool, std::uint32_t serial,
+      zwp_tablet_v2* tablet, wl_surface* surface
+  );
+  static void handleTabletToolProximityOut(void* data, zwp_tablet_tool_v2* tool);
+  static void handleTabletToolDown(void* data, zwp_tablet_tool_v2* tool, std::uint32_t serial);
+  static void handleTabletToolUp(void* data, zwp_tablet_tool_v2* tool);
+  static void handleTabletToolMotion(
+      void* data, zwp_tablet_tool_v2* tool, std::int32_t x, std::int32_t y
+  );
+  static void handleTabletToolFrame(
+      void* data, zwp_tablet_tool_v2* tool, std::uint32_t time
+  );
+
   // Keyboard listener entrypoints
   static void handleKeyboardKeymap(void* data, wl_keyboard* keyboard, std::uint32_t format, int fd, std::uint32_t size);
   static void
@@ -157,6 +186,19 @@ public:
   [[nodiscard]] double userIdleSeconds() const noexcept;
 
 private:
+  struct TabletToolState {
+    wl_surface* surface = nullptr;
+    double x = 0.0;
+    double y = 0.0;
+    std::uint32_t serial = 0;
+    bool hasPosition = false;
+    bool pendingEnter = false;
+    bool tipDown = false;
+    std::vector<PointerEvent> pendingEvents;
+  };
+
+  void bindTabletSeat();
+  void queueTabletEnter(TabletToolState& state);
   void bumpUserActivity() noexcept;
 
   using SteadyClock = std::chrono::steady_clock;
@@ -192,6 +234,12 @@ private:
   std::int32_t m_activeTouchId = -1;
   wl_surface* m_touchSurface = nullptr;
   std::vector<PointerEvent> m_pendingTouchEvents;
+
+  // tablet-v2
+  zwp_tablet_manager_v2* m_tabletManager = nullptr;
+  zwp_tablet_seat_v2* m_tabletSeat = nullptr;
+  std::vector<zwp_tablet_v2*> m_tablets;
+  std::unordered_map<zwp_tablet_tool_v2*, TabletToolState> m_tabletTools;
 
   wl_seat* m_seat = nullptr;
   std::uint32_t m_lastSerial = 0;

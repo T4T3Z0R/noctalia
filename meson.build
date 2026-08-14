@@ -351,6 +351,8 @@ foreach _p : [
     wayland_protos_dir / 'stable/viewporter/viewporter.xml'],
   ['idle-inhibit-unstable-v1',
     wayland_protos_dir / 'unstable/idle-inhibit/idle-inhibit-unstable-v1.xml'],
+  ['tablet-unstable-v2',
+    wayland_protos_dir / 'unstable/tablet/tablet-unstable-v2.xml'],
 
   # ── vendored / project-local protocols (loaded from protocols/) ───────────
   ['text-input-unstable-v3',

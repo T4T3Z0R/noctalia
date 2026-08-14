@@ -3,6 +3,7 @@
 #include "core/input/shortcut_keysym.h"
 #include "core/log.h"
 #include "cursor-shape-v1-client-protocol.h"
+#include "tablet-unstable-v2-client-protocol.h"
 
 #include <algorithm>
 #include <clocale>
@@ -54,6 +55,45 @@ namespace {
       .orientation = [](void*, wl_touch*, std::int32_t, std::int32_t) {},
   };
 
+  const zwp_tablet_seat_v2_listener kTabletSeatListener = {
+      .tablet_added = &WaylandSeat::handleTabletAdded,
+      .tool_added = &WaylandSeat::handleTabletToolAdded,
+      .pad_added = &WaylandSeat::handleTabletPadAdded,
+  };
+
+  const zwp_tablet_v2_listener kTabletListener = {
+      .name = [](void*, zwp_tablet_v2*, const char*) {},
+      .id = [](void*, zwp_tablet_v2*, std::uint32_t, std::uint32_t) {},
+      .path = [](void*, zwp_tablet_v2*, const char*) {},
+      .done = [](void*, zwp_tablet_v2*) {},
+      .removed = &WaylandSeat::handleTabletRemoved,
+  };
+
+  const zwp_tablet_tool_v2_listener kTabletToolListener = {
+      .type = [](void*, zwp_tablet_tool_v2*, std::uint32_t) {},
+      .hardware_serial =
+          [](void*, zwp_tablet_tool_v2*, std::uint32_t, std::uint32_t) {},
+      .hardware_id_wacom =
+          [](void*, zwp_tablet_tool_v2*, std::uint32_t, std::uint32_t) {},
+      .capability = [](void*, zwp_tablet_tool_v2*, std::uint32_t) {},
+      .done = [](void*, zwp_tablet_tool_v2*) {},
+      .removed = &WaylandSeat::handleTabletToolRemoved,
+      .proximity_in = &WaylandSeat::handleTabletToolProximityIn,
+      .proximity_out = &WaylandSeat::handleTabletToolProximityOut,
+      .down = &WaylandSeat::handleTabletToolDown,
+      .up = &WaylandSeat::handleTabletToolUp,
+      .motion = &WaylandSeat::handleTabletToolMotion,
+      .pressure = [](void*, zwp_tablet_tool_v2*, std::uint32_t) {},
+      .distance = [](void*, zwp_tablet_tool_v2*, std::uint32_t) {},
+      .tilt = [](void*, zwp_tablet_tool_v2*, wl_fixed_t, wl_fixed_t) {},
+      .rotation = [](void*, zwp_tablet_tool_v2*, wl_fixed_t) {},
+      .slider = [](void*, zwp_tablet_tool_v2*, std::int32_t) {},
+      .wheel = [](void*, zwp_tablet_tool_v2*, wl_fixed_t, std::int32_t) {},
+      .button =
+          [](void*, zwp_tablet_tool_v2*, std::uint32_t, std::uint32_t, std::uint32_t) {},
+      .frame = &WaylandSeat::handleTabletToolFrame,
+  };
+
   constexpr Logger kLog("seat");
 
   constexpr float kAxisValue120PerStep = 120.0F;
@@ -66,6 +106,7 @@ void WaylandSeat::bind(wl_seat* seat) {
   m_seat = seat;
   m_lastUserActivitySteady = SteadyClock::now();
   wl_seat_add_listener(seat, &kSeatListener, this);
+  bindTabletSeat();
 }
 
 void WaylandSeat::bumpUserActivity() noexcept { m_lastUserActivitySteady = SteadyClock::now(); }
@@ -77,6 +118,38 @@ double WaylandSeat::userIdleSeconds() const noexcept {
 }
 
 void WaylandSeat::setCursorShapeManager(wp_cursor_shape_manager_v1* manager) { m_cursorShapeManager = manager; }
+
+void WaylandSeat::setTabletManager(zwp_tablet_manager_v2* manager) {
+  m_tabletManager = manager;
+  bindTabletSeat();
+}
+
+void WaylandSeat::bindTabletSeat() {
+  if (m_tabletManager == nullptr || m_seat == nullptr || m_tabletSeat != nullptr) {
+    return;
+  }
+
+  m_tabletSeat = zwp_tablet_manager_v2_get_tablet_seat(m_tabletManager, m_seat);
+  zwp_tablet_seat_v2_add_listener(m_tabletSeat, &kTabletSeatListener, this);
+  kLog.info("tablet-v2: bound");
+}
+
+void WaylandSeat::queueTabletEnter(TabletToolState& state) {
+  if (!state.pendingEnter || state.surface == nullptr) {
+    return;
+  }
+
+  state.pendingEvents.push_back(
+      PointerEvent{
+          .type = PointerEvent::Type::Enter,
+          .serial = state.serial,
+          .surface = state.surface,
+          .sx = state.x,
+          .sy = state.y,
+      }
+  );
+  state.pendingEnter = false;
+}
 
 void WaylandSeat::setPointerEventCallback(PointerEventCallback callback) {
   m_pointerEventCallback = std::move(callback);
@@ -139,6 +212,20 @@ void WaylandSeat::forgetSurface(wl_surface* surface) noexcept {
     m_activeTouchId = -1;
   }
   std::erase_if(m_pendingTouchEvents, [surface](const PointerEvent& event) { return event.surface == surface; });
+
+  for (auto& [tool, state] : m_tabletTools) {
+    (void)tool;
+    std::erase_if(
+        state.pendingEvents,
+        [surface](const PointerEvent& event) { return event.surface == surface; }
+    );
+    if (state.surface == surface) {
+      state.surface = nullptr;
+      state.hasPosition = false;
+      state.pendingEnter = false;
+      state.tipDown = false;
+    }
+  }
 }
 
 void WaylandSeat::cleanup() {
@@ -159,6 +246,23 @@ void WaylandSeat::cleanup() {
   m_activeTouchId = -1;
   m_touchSurface = nullptr;
   m_pendingTouchEvents.clear();
+
+  for (auto& [tool, state] : m_tabletTools) {
+    (void)state;
+    zwp_tablet_tool_v2_destroy(tool);
+  }
+  m_tabletTools.clear();
+
+  for (auto* tablet : m_tablets) {
+    zwp_tablet_v2_destroy(tablet);
+  }
+  m_tablets.clear();
+
+  if (m_tabletSeat != nullptr) {
+    zwp_tablet_seat_v2_destroy(m_tabletSeat);
+    m_tabletSeat = nullptr;
+  }
+  m_tabletManager = nullptr;
 
   if (m_composeState != nullptr) {
     xkb_compose_state_unref(m_composeState);
@@ -586,6 +690,261 @@ void WaylandSeat::handleTouchCancel(void* data, wl_touch* /*touch*/) {
             .touch = true,
         }
     );
+  }
+}
+
+void WaylandSeat::handleTabletAdded(
+    void* data, zwp_tablet_seat_v2* /*tabletSeat*/, zwp_tablet_v2* tablet
+) {
+  auto* self = static_cast<WaylandSeat*>(data);
+  self->m_tablets.push_back(tablet);
+  zwp_tablet_v2_add_listener(tablet, &kTabletListener, self);
+  kLog.info("tablet-v2: tablet added");
+}
+
+void WaylandSeat::handleTabletRemoved(void* data, zwp_tablet_v2* tablet) {
+  auto* self = static_cast<WaylandSeat*>(data);
+  std::erase(self->m_tablets, tablet);
+  zwp_tablet_v2_destroy(tablet);
+  kLog.info("tablet-v2: tablet removed");
+}
+
+void WaylandSeat::handleTabletToolAdded(
+    void* data, zwp_tablet_seat_v2* /*tabletSeat*/, zwp_tablet_tool_v2* tool
+) {
+  auto* self = static_cast<WaylandSeat*>(data);
+  self->m_tabletTools.try_emplace(tool);
+  zwp_tablet_tool_v2_add_listener(tool, &kTabletToolListener, self);
+  kLog.info("tablet-v2: tool added");
+}
+
+void WaylandSeat::handleTabletPadAdded(
+    void* /*data*/, zwp_tablet_seat_v2* /*tabletSeat*/, zwp_tablet_pad_v2* pad
+) {
+  // Noctalia currently has no tablet-pad UI behavior. Release the object
+  // immediately rather than keeping an event source with no listeners.
+  zwp_tablet_pad_v2_destroy(pad);
+}
+
+void WaylandSeat::handleTabletToolRemoved(void* data, zwp_tablet_tool_v2* tool) {
+  auto* self = static_cast<WaylandSeat*>(data);
+  auto it = self->m_tabletTools.find(tool);
+  if (it != self->m_tabletTools.end()) {
+    if (self->m_lastPointerSurface == it->second.surface) {
+      self->m_lastPointerSurface = nullptr;
+      self->m_hasPointerPosition = false;
+    }
+    self->m_tabletTools.erase(it);
+  }
+  zwp_tablet_tool_v2_destroy(tool);
+  kLog.info("tablet-v2: tool removed");
+}
+
+void WaylandSeat::handleTabletToolProximityIn(
+    void* data, zwp_tablet_tool_v2* tool, std::uint32_t serial,
+    zwp_tablet_v2* /*tablet*/, wl_surface* surface
+) {
+  auto* self = static_cast<WaylandSeat*>(data);
+  auto it = self->m_tabletTools.find(tool);
+  if (it == self->m_tabletTools.end()) {
+    return;
+  }
+
+  auto& state = it->second;
+  state.surface = surface;
+  state.serial = serial;
+  state.hasPosition = false;
+  state.pendingEnter = true;
+  state.tipDown = false;
+  state.pendingEvents.clear();
+
+  self->m_lastSerial = serial;
+  self->m_lastInputSource = InputSource::Pointer;
+  self->m_lastPointerSurface = surface;
+  self->m_hasPointerPosition = false;
+}
+
+void WaylandSeat::handleTabletToolMotion(
+    void* data, zwp_tablet_tool_v2* tool, std::int32_t x, std::int32_t y
+) {
+  auto* self = static_cast<WaylandSeat*>(data);
+  auto it = self->m_tabletTools.find(tool);
+  if (it == self->m_tabletTools.end()) {
+    return;
+  }
+
+  auto& state = it->second;
+  if (state.surface == nullptr) {
+    return;
+  }
+
+  state.x = wl_fixed_to_double(x);
+  state.y = wl_fixed_to_double(y);
+  state.hasPosition = true;
+
+  self->m_lastInputSource = InputSource::Pointer;
+  self->m_lastPointerSurface = state.surface;
+  self->m_lastPointerX = state.x;
+  self->m_lastPointerY = state.y;
+  self->m_hasPointerPosition = true;
+
+  self->queueTabletEnter(state);
+
+  state.pendingEvents.push_back(
+      PointerEvent{
+          .type = PointerEvent::Type::Motion,
+          .surface = state.surface,
+          .sx = state.x,
+          .sy = state.y,
+      }
+  );
+}
+
+void WaylandSeat::handleTabletToolDown(
+    void* data, zwp_tablet_tool_v2* tool, std::uint32_t serial
+) {
+  auto* self = static_cast<WaylandSeat*>(data);
+  auto it = self->m_tabletTools.find(tool);
+  if (it == self->m_tabletTools.end()) {
+    return;
+  }
+
+  auto& state = it->second;
+  if (state.surface == nullptr) {
+    return;
+  }
+
+  state.serial = serial;
+  state.tipDown = true;
+  self->m_lastSerial = serial;
+  self->m_lastInputSource = InputSource::Pointer;
+
+  self->queueTabletEnter(state);
+
+  state.pendingEvents.push_back(
+      PointerEvent{
+          .type = PointerEvent::Type::Button,
+          .serial = serial,
+          .surface = state.surface,
+          .sx = state.x,
+          .sy = state.y,
+          .button = BTN_LEFT,
+          .pressed = true,
+      }
+  );
+}
+
+void WaylandSeat::handleTabletToolUp(void* data, zwp_tablet_tool_v2* tool) {
+  auto* self = static_cast<WaylandSeat*>(data);
+  auto it = self->m_tabletTools.find(tool);
+  if (it == self->m_tabletTools.end()) {
+    return;
+  }
+
+  auto& state = it->second;
+  if (state.surface == nullptr || !state.tipDown) {
+    return;
+  }
+
+  state.tipDown = false;
+  self->m_lastInputSource = InputSource::Pointer;
+
+  state.pendingEvents.push_back(
+      PointerEvent{
+          .type = PointerEvent::Type::Button,
+          .serial = state.serial,
+          .surface = state.surface,
+          .sx = state.x,
+          .sy = state.y,
+          .button = BTN_LEFT,
+          .pressed = false,
+      }
+  );
+}
+
+void WaylandSeat::handleTabletToolProximityOut(void* data, zwp_tablet_tool_v2* tool) {
+  auto* self = static_cast<WaylandSeat*>(data);
+  auto it = self->m_tabletTools.find(tool);
+  if (it == self->m_tabletTools.end()) {
+    return;
+  }
+
+  auto& state = it->second;
+  if (state.surface == nullptr) {
+    return;
+  }
+
+  self->queueTabletEnter(state);
+
+  if (state.tipDown) {
+    state.pendingEvents.push_back(
+        PointerEvent{
+            .type = PointerEvent::Type::Button,
+            .serial = state.serial,
+            .surface = state.surface,
+            .sx = state.x,
+            .sy = state.y,
+            .button = BTN_LEFT,
+            .pressed = false,
+        }
+    );
+    state.tipDown = false;
+  }
+
+  state.pendingEvents.push_back(
+      PointerEvent{
+          .type = PointerEvent::Type::Leave,
+          .serial = state.serial,
+          .surface = state.surface,
+      }
+  );
+
+  if (self->m_lastPointerSurface == state.surface) {
+    self->m_lastPointerSurface = nullptr;
+    self->m_hasPointerPosition = false;
+  }
+
+  state.surface = nullptr;
+  state.hasPosition = false;
+  state.pendingEnter = false;
+}
+
+void WaylandSeat::handleTabletToolFrame(
+    void* data, zwp_tablet_tool_v2* tool, std::uint32_t time
+) {
+  auto* self = static_cast<WaylandSeat*>(data);
+  auto it = self->m_tabletTools.find(tool);
+  if (it == self->m_tabletTools.end()) {
+    return;
+  }
+
+  auto& state = it->second;
+  self->queueTabletEnter(state);
+
+  std::vector<PointerEvent> events = std::move(state.pendingEvents);
+  state.pendingEvents.clear();
+
+  if (!self->m_pointerEventCallback) {
+    return;
+  }
+
+  for (auto& event : events) {
+    if (event.time == 0) {
+      event.time = time;
+    }
+
+    switch (event.type) {
+    case PointerEvent::Type::Enter:
+    case PointerEvent::Type::Motion:
+    case PointerEvent::Type::Button:
+    case PointerEvent::Type::Axis:
+      self->bumpUserActivity();
+      break;
+    case PointerEvent::Type::Leave:
+      break;
+    }
+
+    self->m_pointerEventCallback(event);
   }
 }
 

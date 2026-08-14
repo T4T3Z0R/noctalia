@@ -18,6 +18,7 @@
 #include "hyprland-toplevel-mapping-v1-client-protocol.h"
 #include "idle-inhibit-unstable-v1-client-protocol.h"
 #include "org-kde-plasma-virtual-desktop-client-protocol.h"
+#include "tablet-unstable-v2-client-protocol.h"
 #include "text-input-unstable-v3-client-protocol.h"
 #include "util/string_utils.h"
 #include "viewporter-client-protocol.h"
@@ -59,6 +60,7 @@ namespace {
   constexpr std::uint32_t kWlrForeignToplevelManagerVersion = 3;
   constexpr std::uint32_t kExtForeignToplevelListVersion = 1;
   constexpr std::uint32_t kCursorShapeManagerVersion = 1;
+  constexpr std::uint32_t kTabletManagerVersion = 1;
   constexpr std::uint32_t kXdgActivationVersion = 1;
   constexpr std::uint32_t kExtSessionLockManagerVersion = 1;
   constexpr std::uint32_t kExtIdleNotifierVersion = 2;
@@ -1007,6 +1009,15 @@ void WaylandConnection::bindGlobal(
     return;
   }
 
+  if (interfaceName == zwp_tablet_manager_v2_interface.name) {
+    const auto bindVersion = std::min(version, kTabletManagerVersion);
+    m_tabletManager = static_cast<zwp_tablet_manager_v2*>(
+        wl_registry_bind(registry, name, &zwp_tablet_manager_v2_interface, bindVersion)
+    );
+    m_seatHandler.setTabletManager(m_tabletManager);
+    return;
+  }
+
   if (interfaceName == wl_shm_interface.name) {
     const auto bindVersion = std::min(version, kShmVersion);
     m_shm = static_cast<wl_shm*>(wl_registry_bind(registry, name, &wl_shm_interface, bindVersion));
@@ -1373,6 +1384,11 @@ void WaylandConnection::cleanup() {
   }
 
   m_seatHandler.cleanup();
+
+  if (m_tabletManager != nullptr) {
+    zwp_tablet_manager_v2_destroy(m_tabletManager);
+    m_tabletManager = nullptr;
+  }
 
   if (m_xdgActivation != nullptr) {
     xdg_activation_v1_destroy(m_xdgActivation);
