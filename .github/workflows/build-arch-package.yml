@@ -75,6 +75,11 @@ jobs:
           set -euo pipefail
 
           short_sha="${GITHUB_SHA:0:8}"
+
+          git fetch --force \
+            https://github.com/noctalia-dev/noctalia.git \
+            'refs/tags/*:refs/tags/*'
+
           base_tag="$(git describe --tags --abbrev=0)"
           base_ver="${base_tag#v}"
           pkgver="${base_ver//-/_}.penfix.${short_sha}"
