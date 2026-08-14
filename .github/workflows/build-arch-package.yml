@@ -1,0 +1,220 @@
+name: Build Arch penfix package
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - pen-tablet-v2
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arch-penfix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-package:
+    name: Build and test Arch package
+    runs-on: ubuntu-latest
+
+    container:
+      image: archlinux:latest
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Install Arch build dependencies
+        run: |
+          set -euo pipefail
+          pacman -Syu --noconfirm --needed \
+            base-devel git meson ninja pkgconf \
+            wayland wayland-protocols \
+            libglvnd freetype2 fontconfig \
+            cairo pango harfbuzz \
+            libxkbcommon glib2 \
+            libsecret libsodium \
+            sdbus-cpp libpipewire wireplumber polkit \
+            pam curl libwebp libjxl libsndfile librsvg \
+            libqalculate libxml2 \
+            md4c tomlplusplus libical \
+            nlohmann-json stb \
+            jemalloc just clang
+
+      - name: Checkout pen branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Create build user
+        run: |
+          set -euo pipefail
+          useradd -m builduser
+          chown -R builduser:builduser "$GITHUB_WORKSPACE"
+
+      - name: Check formatting
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(
+            find src \( -name '*.cpp' -o -name '*.h' \) -print0
+          )
+          clang-format --dry-run -Werror "${files[@]}"
+
+      - name: Build, test, and lint source
+        run: |
+          set -euo pipefail
+          su builduser -c "cd '$GITHUB_WORKSPACE' && just build"
+          su builduser -c "cd '$GITHUB_WORKSPACE' && just test debug --print-errorlogs"
+          su builduser -c "cd '$GITHUB_WORKSPACE' && just lint"
+
+      - name: Generate package source and PKGBUILD
+        run: |
+          set -euo pipefail
+
+          short_sha="${GITHUB_SHA:0:8}"
+          base_tag="$(git describe --tags --abbrev=0)"
+          base_ver="${base_tag#v}"
+          pkgver="${base_ver//-/_}.penfix.${short_sha}"
+
+          mkdir -p .github-package
+
+          git archive \
+            --format=tar.gz \
+            --prefix=noctalia-src/ \
+            HEAD > .github-package/noctalia-src.tar.gz
+
+          cat > .github-package/PKGBUILD <<'PKGBUILD'
+          pkgname=noctalia-penfix
+          pkgver=@PKGVER@
+          pkgrel=1
+          pkgdesc='Noctalia desktop shell with Surface tablet-v2 pen support'
+          arch=('x86_64')
+          url='https://github.com/T4T3Z0R/noctalia'
+          license=('MIT')
+
+          depends=(
+            'cairo'
+            'curl'
+            'fontconfig'
+            'freetype2'
+            'gcc-libs'
+            'git'
+            'glib2'
+            'glibc'
+            'jemalloc'
+            'libglvnd'
+            'libical'
+            'libpipewire'
+            'libqalculate'
+            'librsvg'
+            'libsecret'
+            'libsodium'
+            'libwebp'
+            'libwireplumber'
+            'libxkbcommon'
+            'libxml2'
+            'md4c'
+            'pam'
+            'pango'
+            'polkit'
+            'sdbus-cpp'
+            'tomlplusplus'
+            'wayland'
+          )
+
+          makedepends=(
+            'meson'
+            'ninja'
+            'nlohmann-json'
+            'pkgconf'
+            'stb'
+            'wayland-protocols'
+          )
+
+          provides=('noctalia')
+          conflicts=('noctalia' 'noctalia-bin' 'noctalia-git')
+
+          options=('!debug')
+
+          source=('noctalia-src.tar.gz')
+          sha256sums=('SKIP')
+
+          build() {
+            cd "$srcdir/noctalia-src"
+
+            meson setup build-package \
+              --prefix=/usr \
+              --buildtype=release \
+              -Dcpp_std=c++23 \
+              -Dtests=disabled \
+              -Dnative_optimizations=false
+
+            meson compile -C build-package noctalia
+          }
+
+          package() {
+            cd "$srcdir/noctalia-src"
+            meson install \
+              -C build-package \
+              --destdir "$pkgdir"
+          }
+          PKGBUILD
+
+          sed -i "s/@PKGVER@/${pkgver}/" .github-package/PKGBUILD
+
+          chown -R builduser:builduser .github-package
+
+          echo "PKGVER=${pkgver}" >> "$GITHUB_ENV"
+
+      - name: Build pacman package
+        run: |
+          set -euo pipefail
+          su builduser -c \
+            "cd '$GITHUB_WORKSPACE/.github-package' && makepkg --noconfirm --clean --cleanbuild"
+
+      - name: Inspect package
+        run: |
+          set -euo pipefail
+
+          pkg="$(
+            find .github-package \
+              -maxdepth 1 \
+              -type f \
+              -name 'noctalia-penfix-*.pkg.tar.zst' \
+              -print -quit
+          )"
+
+          test -n "$pkg"
+
+          pacman -Qip "$pkg"
+
+          echo
+          echo '--- packaged files ---'
+          pacman -Qlp "$pkg" | sed -n '1,160p'
+
+          mkdir -p package-output
+          cp "$pkg" package-output/
+
+          echo "PACKAGE_FILE=$(basename "$pkg")" >> "$GITHUB_ENV"
+
+      - name: Upload Arch package
+        uses: actions/upload-artifact@v4
+        with:
+          name: noctalia-penfix-${{ env.PKGVER }}-${{ github.sha }}
+          path: package-output/*.pkg.tar.zst
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Build summary
+        run: |
+          {
+            echo '## Noctalia penfix Arch package'
+            echo
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Package: \`${PACKAGE_FILE}\`"
+            echo '- Arch Linux build environment'
+            echo '- Formatting, build, tests, and lint passed'
+            echo '- Native CPU optimizations disabled for portability'
+          } >> "$GITHUB_STEP_SUMMARY"
