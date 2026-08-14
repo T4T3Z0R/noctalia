@@ -135,25 +135,18 @@ public:
 
   // tablet-v2 listener entrypoints
   static void handleTabletAdded(void* data, zwp_tablet_seat_v2* tabletSeat, zwp_tablet_v2* tablet);
-  static void handleTabletToolAdded(
-      void* data, zwp_tablet_seat_v2* tabletSeat, zwp_tablet_tool_v2* tool
-  );
+  static void handleTabletToolAdded(void* data, zwp_tablet_seat_v2* tabletSeat, zwp_tablet_tool_v2* tool);
   static void handleTabletPadAdded(void* data, zwp_tablet_seat_v2* tabletSeat, zwp_tablet_pad_v2* pad);
   static void handleTabletRemoved(void* data, zwp_tablet_v2* tablet);
   static void handleTabletToolRemoved(void* data, zwp_tablet_tool_v2* tool);
   static void handleTabletToolProximityIn(
-      void* data, zwp_tablet_tool_v2* tool, std::uint32_t serial,
-      zwp_tablet_v2* tablet, wl_surface* surface
+      void* data, zwp_tablet_tool_v2* tool, std::uint32_t serial, zwp_tablet_v2* tablet, wl_surface* surface
   );
   static void handleTabletToolProximityOut(void* data, zwp_tablet_tool_v2* tool);
   static void handleTabletToolDown(void* data, zwp_tablet_tool_v2* tool, std::uint32_t serial);
   static void handleTabletToolUp(void* data, zwp_tablet_tool_v2* tool);
-  static void handleTabletToolMotion(
-      void* data, zwp_tablet_tool_v2* tool, std::int32_t x, std::int32_t y
-  );
-  static void handleTabletToolFrame(
-      void* data, zwp_tablet_tool_v2* tool, std::uint32_t time
-  );
+  static void handleTabletToolMotion(void* data, zwp_tablet_tool_v2* tool, std::int32_t x, std::int32_t y);
+  static void handleTabletToolFrame(void* data, zwp_tablet_tool_v2* tool, std::uint32_t time);
 
   // Keyboard listener entrypoints
   static void handleKeyboardKeymap(void* data, wl_keyboard* keyboard, std::uint32_t format, int fd, std::uint32_t size);
