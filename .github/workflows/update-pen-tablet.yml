@@ -2,6 +2,12 @@ name: Update pen tablet branch
 
 on:
   workflow_dispatch:
+    inputs:
+      test_pushover:
+        description: Send a Pushover test notification
+        required: false
+        default: false
+        type: boolean
   schedule:
     - cron: '37 9 * * *'
       timezone: "America/New_York"
@@ -393,3 +399,87 @@ jobs:
           git push origin \
             --delete "${CANDIDATE_BRANCH}" \
             2>/dev/null || true
+
+  notify:
+    name: Notify via Pushover
+    needs:
+      - check
+      - upstream-support
+      - prepare
+      - validate
+      - promote
+      - cleanup
+
+    if: >-
+      always() &&
+      (
+        (github.event_name == 'workflow_dispatch' && inputs.test_pushover == true) ||
+        needs.check.result == 'failure' ||
+        (
+          needs.check.result == 'success' &&
+          needs.check.outputs.changed == 'true' &&
+          needs.check.outputs.support_already_reported != 'true'
+        )
+      )
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send Pushover notification
+        env:
+          PUSHOVER_APP_TOKEN: ${{ secrets.PUSHOVER_APP_TOKEN }}
+          PUSHOVER_USER_KEY: ${{ secrets.PUSHOVER_USER_KEY }}
+          TEST_PUSHOVER: ${{ inputs.test_pushover }}
+          CHECK_RESULT: ${{ needs.check.result }}
+          CURRENT_TAG: ${{ needs.check.outputs.current_tag }}
+          LATEST_TAG: ${{ needs.check.outputs.latest_tag }}
+          UPSTREAM_SUPPORT: ${{ needs.check.outputs.upstream_support }}
+          PREPARE_RESULT: ${{ needs.prepare.result }}
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+          PROMOTE_RESULT: ${{ needs.promote.result }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${PUSHOVER_APP_TOKEN}" || -z "${PUSHOVER_USER_KEY}" ]]; then
+            echo "::error::Pushover secrets are missing."
+            exit 1
+          fi
+
+          title="Noctalia penfix"
+          message="The updater completed with an unexpected state."
+
+          if [[ "${TEST_PUSHOVER}" == "true" ]]; then
+            title="Noctalia updater test"
+            message="Pushover notifications from GitHub Actions are working."
+          elif [[ "${CHECK_RESULT}" != "success" ]]; then
+            title="Noctalia update check FAILED"
+            message="The upstream release check failed before an update decision could be made."
+          elif [[ "${UPSTREAM_SUPPORT}" == "true" ]]; then
+            title="Noctalia upstream tablet support"
+            message="Upstream ${LATEST_TAG} appears to contain tablet-v2 support. The custom pen patch was left unchanged and needs manual review."
+          elif [[ "${PROMOTE_RESULT}" == "success" ]]; then
+            title="Noctalia penfix updated"
+            message="Validated and promoted pen-tablet-v2 from ${CURRENT_TAG} to ${LATEST_TAG}."
+          elif [[ "${PREPARE_RESULT}" == "failure" ]]; then
+            title="Noctalia penfix update FAILED"
+            message="Rebase onto ${LATEST_TAG} failed. The existing pen-tablet-v2 branch remains unchanged."
+          elif [[ "${VALIDATE_RESULT}" == "failure" ]]; then
+            title="Noctalia penfix update FAILED"
+            message="Build, test, lint, or package validation for ${LATEST_TAG} failed. The existing pen-tablet-v2 branch remains unchanged."
+          elif [[ "${PROMOTE_RESULT}" == "failure" ]]; then
+            title="Noctalia penfix update FAILED"
+            message="Validation passed for ${LATEST_TAG}, but promotion of pen-tablet-v2 failed. Manual review is required."
+          fi
+
+          curl --fail --silent --show-error \
+            --retry 3 \
+            --retry-all-errors \
+            --max-time 30 \
+            --form-string "token=${PUSHOVER_APP_TOKEN}" \
+            --form-string "user=${PUSHOVER_USER_KEY}" \
+            --form-string "title=${title}" \
+            --form-string "message=${message}" \
+            --form-string "url=${RUN_URL}" \
+            --form-string "url_title=Open GitHub Actions run" \
+            https://api.pushover.net/1/messages.json
