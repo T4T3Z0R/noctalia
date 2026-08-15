@@ -1,0 +1,395 @@
+name: Update pen tablet branch
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '37 9 * * *'
+      timezone: "America/New_York"
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: update-pen-tablet-v2
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: noctalia-dev/noctalia
+  PEN_BRANCH: pen-tablet-v2
+  CANDIDATE_BRANCH: automation/pen-tablet-v2-candidate
+  TABLET_MARKER_BRANCH: automation/upstream-tablet-detected
+  BUILD_WORKFLOW: build-arch-package.yml
+
+jobs:
+  check:
+    name: Check upstream release
+    runs-on: ubuntu-latest
+
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+      current_tag: ${{ steps.check.outputs.current_tag }}
+      latest_tag: ${{ steps.check.outputs.latest_tag }}
+      pen_sha: ${{ steps.check.outputs.pen_sha }}
+      upstream_support: ${{ steps.check.outputs.upstream_support }}
+      support_already_reported: ${{ steps.check.outputs.support_already_reported }}
+
+    steps:
+      - name: Checkout control branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Compare releases
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          git remote add upstream \
+            "https://github.com/${UPSTREAM_REPO}.git" 2>/dev/null \
+            || git remote set-url upstream \
+              "https://github.com/${UPSTREAM_REPO}.git"
+
+          git fetch origin \
+            "${PEN_BRANCH}:refs/remotes/origin/${PEN_BRANCH}"
+
+          git fetch --force upstream \
+            'refs/tags/*:refs/tags/*'
+
+          latest_tag="$(
+            gh api "repos/${UPSTREAM_REPO}/releases/latest" \
+              --jq '.tag_name'
+          )"
+
+          current_tag="$(
+            git describe \
+              --tags \
+              --abbrev=0 \
+              "origin/${PEN_BRANCH}"
+          )"
+
+          pen_sha="$(
+            git rev-parse "origin/${PEN_BRANCH}"
+          )"
+
+          latest_sha="$(
+            git rev-list -n 1 "${latest_tag}"
+          )"
+
+          changed=false
+          upstream_support=false
+          support_already_reported=false
+
+          if [[ "${latest_tag}" != "${current_tag}" ]]; then
+            changed=true
+
+            if git grep -Eq \
+              'zwp_tablet_(manager|seat)_v2|tablet-unstable-v2' \
+              "${latest_tag}" \
+              -- meson.build src/wayland 2>/dev/null
+            then
+              upstream_support=true
+
+              git fetch origin \
+                "${TABLET_MARKER_BRANCH}:refs/remotes/origin/${TABLET_MARKER_BRANCH}" \
+                2>/dev/null || true
+
+              if git rev-parse \
+                   "origin/${TABLET_MARKER_BRANCH}" \
+                   >/dev/null 2>&1
+              then
+                marker_sha="$(
+                  git rev-parse \
+                    "origin/${TABLET_MARKER_BRANCH}"
+                )"
+
+                if [[ "${marker_sha}" == "${latest_sha}" ]]; then
+                  support_already_reported=true
+                fi
+              fi
+            fi
+          fi
+
+          {
+            echo "changed=${changed}"
+            echo "current_tag=${current_tag}"
+            echo "latest_tag=${latest_tag}"
+            echo "pen_sha=${pen_sha}"
+            echo "upstream_support=${upstream_support}"
+            echo "support_already_reported=${support_already_reported}"
+          } >> "${GITHUB_OUTPUT}"
+
+          {
+            echo '## Noctalia pen updater'
+            echo
+            echo "- Current pen base: \`${current_tag}\`"
+            echo "- Latest upstream: \`${latest_tag}\`"
+            echo "- Update needed: \`${changed}\`"
+            echo "- Upstream tablet-v2 detected: \`${upstream_support}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  upstream-support:
+    name: Upstream tablet support detected
+    needs: check
+
+    if: >-
+      needs.check.outputs.changed == 'true' &&
+      needs.check.outputs.upstream_support == 'true' &&
+      needs.check.outputs.support_already_reported != 'true'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Record detected upstream release
+        run: |
+          set -euo pipefail
+
+          git remote add upstream \
+            "https://github.com/${UPSTREAM_REPO}.git" 2>/dev/null \
+            || git remote set-url upstream \
+              "https://github.com/${UPSTREAM_REPO}.git"
+
+          git fetch --force upstream \
+            "refs/tags/${{ needs.check.outputs.latest_tag }}:refs/tags/${{ needs.check.outputs.latest_tag }}"
+
+          latest_sha="$(
+            git rev-list -n 1 \
+              "${{ needs.check.outputs.latest_tag }}"
+          )"
+
+          git push --force origin \
+            "${latest_sha}:refs/heads/${TABLET_MARKER_BRANCH}"
+
+      - name: Stop for manual review
+        run: |
+          echo "::error::Upstream ${{ needs.check.outputs.latest_tag }} appears to contain tablet-v2 support. The custom pen patch may no longer be needed."
+          exit 1
+
+  prepare:
+    name: Rebase candidate
+    needs: check
+
+    if: >-
+      needs.check.outputs.changed == 'true' &&
+      needs.check.outputs.upstream_support != 'true'
+
+    runs-on: ubuntu-latest
+
+    outputs:
+      candidate_sha: ${{ steps.rebase.outputs.candidate_sha }}
+
+    steps:
+      - name: Checkout pen branch
+        uses: actions/checkout@v6
+        with:
+          ref: pen-tablet-v2
+          fetch-depth: 0
+
+      - name: Rebase onto new release
+        id: rebase
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream \
+            "https://github.com/${UPSTREAM_REPO}.git" 2>/dev/null \
+            || git remote set-url upstream \
+              "https://github.com/${UPSTREAM_REPO}.git"
+
+          git fetch --force upstream \
+            'refs/tags/*:refs/tags/*'
+
+          git rebase \
+            --onto "${{ needs.check.outputs.latest_tag }}" \
+            "${{ needs.check.outputs.current_tag }}"
+
+          candidate_sha="$(
+            git rev-parse HEAD
+          )"
+
+          echo "candidate_sha=${candidate_sha}" \
+            >> "${GITHUB_OUTPUT}"
+
+          git push --force origin \
+            "HEAD:refs/heads/${CANDIDATE_BRANCH}"
+
+          {
+            echo '## Candidate prepared'
+            echo
+            echo "- Old base: \`${{ needs.check.outputs.current_tag }}\`"
+            echo "- New base: \`${{ needs.check.outputs.latest_tag }}\`"
+            echo "- Candidate: \`${candidate_sha}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  validate:
+    name: Validate candidate package
+    needs:
+      - check
+      - prepare
+
+    runs-on: ubuntu-latest
+
+    outputs:
+      build_run_id: ${{ steps.validate.outputs.build_run_id }}
+
+    steps:
+      - name: Dispatch package workflow and wait
+        id: validate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          response="$(
+            curl --fail-with-body --silent --show-error \
+              --request POST \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              --header "X-GitHub-Api-Version: 2026-03-10" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/${BUILD_WORKFLOW}/dispatches" \
+              --data "$(jq -n \
+                --arg ref "${CANDIDATE_BRANCH}" \
+                '{ref: $ref}')"
+          )"
+
+          build_run_id="$(
+            jq -r '.workflow_run_id // empty' \
+              <<< "${response}"
+          )"
+
+          if [[ -z "${build_run_id}" ]]; then
+            echo "Workflow dispatch did not return a run ID."
+            echo "${response}"
+            exit 1
+          fi
+
+          echo "build_run_id=${build_run_id}" \
+            >> "${GITHUB_OUTPUT}"
+
+          echo "Dispatched package run ${build_run_id}"
+
+          while true; do
+            run_json="$(
+              curl --fail --silent --show-error \
+                --header "Accept: application/vnd.github+json" \
+                --header "Authorization: Bearer ${GH_TOKEN}" \
+                --header "X-GitHub-Api-Version: 2026-03-10" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${build_run_id}"
+            )"
+
+            status="$(
+              jq -r '.status' \
+                <<< "${run_json}"
+            )"
+
+            conclusion="$(
+              jq -r '.conclusion // ""' \
+                <<< "${run_json}"
+            )"
+
+            echo "Package workflow: ${status}${conclusion:+ / ${conclusion}}"
+
+            if [[ "${status}" == "completed" ]]; then
+              break
+            fi
+
+            sleep 20
+          done
+
+          html_url="$(
+            jq -r '.html_url' \
+              <<< "${run_json}"
+          )"
+
+          {
+            echo '## Candidate validation'
+            echo
+            echo "- Package workflow: ${html_url}"
+            echo "- Result: \`${conclusion}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          if [[ "${conclusion}" != "success" ]]; then
+            exit 1
+          fi
+
+  promote:
+    name: Promote validated candidate
+    needs:
+      - check
+      - prepare
+      - validate
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Update pen branch
+        run: |
+          set -euo pipefail
+
+          git fetch origin \
+            "${PEN_BRANCH}:refs/remotes/origin/${PEN_BRANCH}" \
+            "${CANDIDATE_BRANCH}:refs/remotes/origin/${CANDIDATE_BRANCH}"
+
+          actual_pen_sha="$(
+            git rev-parse \
+              "origin/${PEN_BRANCH}"
+          )"
+
+          expected_pen_sha="${{ needs.check.outputs.pen_sha }}"
+          candidate_sha="${{ needs.prepare.outputs.candidate_sha }}"
+
+          if [[ "${actual_pen_sha}" != "${expected_pen_sha}" ]]; then
+            echo "pen-tablet-v2 moved while the candidate was building."
+            echo "Expected: ${expected_pen_sha}"
+            echo "Actual:   ${actual_pen_sha}"
+            echo "Refusing to overwrite it."
+            exit 1
+          fi
+
+          git push origin \
+            "${candidate_sha}:refs/heads/${PEN_BRANCH}" \
+            --force-with-lease="refs/heads/${PEN_BRANCH}:${expected_pen_sha}"
+
+          {
+            echo '## Pen branch updated'
+            echo
+            echo "- Release: \`${{ needs.check.outputs.latest_tag }}\`"
+            echo "- Commit: \`${candidate_sha}\`"
+            echo "- Package workflow run: \`${{ needs.validate.outputs.build_run_id }}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  cleanup:
+    name: Remove candidate branch
+    needs:
+      - prepare
+      - validate
+      - promote
+
+    if: always() && needs.prepare.result == 'success'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Delete temporary candidate
+        run: |
+          git push origin \
+            --delete "${CANDIDATE_BRANCH}" \
+            2>/dev/null || true
