@@ -8,8 +8,8 @@
 #include "render/core/texture_manager.h"
 #include "render/scene/input_dispatcher.h"
 #include "render/scene/node.h"
-#include "shell/lockscreen/lockscreen_login_box.h"
 #include "shell/lockscreen/lockscreen_keyboard.h"
+#include "shell/lockscreen/lockscreen_login_box.h"
 #include "wayland/surface.h"
 
 #include <array>
