@@ -140,9 +140,11 @@ LockscreenKeyboard::LockscreenKeyboard(Node& parent) {
   addKey(*letterControls, "⌫", 1.4F, [this]() { m_model.backspace(); });
   addControlRow(*m_letterRows, false);
 
-  m_root->addChild(ui::flex(
-      FlexDirection::Vertical, {.out = &m_symbolRows, .gap = Style::spaceXs, .flexGrow = 1.0F, .visible = false}
-  ));
+  m_root->addChild(
+      ui::flex(
+          FlexDirection::Vertical, {.out = &m_symbolRows, .gap = Style::spaceXs, .flexGrow = 1.0F, .visible = false}
+      )
+  );
   addCharacterRow(*m_symbolRows, "1234567890");
   addCharacterRow(*m_symbolRows, "!@#$%^&*()");
   addCharacterRow(*m_symbolRows, "-_=+[]{}\\|");
@@ -179,11 +181,13 @@ void LockscreenKeyboard::arrange(Renderer& renderer, float width, float height) 
 void LockscreenKeyboard::addCharacterRow(Flex& parent, std::string_view characters) {
   auto* row = addRow(parent);
   for (const char character : characters) {
-    addKey(*row, std::string(1, static_cast<char>(std::toupper(static_cast<unsigned char>(character)))), 1.0F,
-           [this, character]() {
-             m_model.typeCharacter(character);
-             syncState();
-           });
+    addKey(
+        *row, std::string(1, static_cast<char>(std::toupper(static_cast<unsigned char>(character)))), 1.0F,
+        [this, character]() {
+          m_model.typeCharacter(character);
+          syncState();
+        }
+    );
   }
 }
 
