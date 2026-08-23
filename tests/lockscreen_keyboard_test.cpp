@@ -1,6 +1,10 @@
 #include "shell/lockscreen/lockscreen_keyboard.h"
 #include "shell/lockscreen/lockscreen_login_box.h"
+#include "render/scene/input_area.h"
+#include "render/scene/node.h"
+#include "ui/controls/button.h"
 
+#include <functional>
 #include <print>
 #include <string>
 #include <unordered_map>
@@ -21,6 +25,22 @@ namespace {
 } // namespace
 
 int main() {
+  Node root;
+  LockscreenKeyboard keyboard(root);
+  std::size_t keyCount = 0;
+  std::function<void(Node&)> checkFocus = [&](Node& node) {
+    if (auto* button = dynamic_cast<Button*>(&node)) {
+      ++keyCount;
+      expect(!button->inputArea()->focusable(), "OSK key is not keyboard-focusable");
+      expect(!button->inputArea()->tabStop(), "OSK key is not a tab stop");
+    }
+    for (const auto& child : node.children()) {
+      checkFocus(*child);
+    }
+  };
+  checkFocus(root);
+  expect(keyCount > 0, "keyboard constructed focus-tested keys");
+
   LockscreenKeyboardModel model;
   std::vector<LockscreenKeyboardAction> actions;
   model.setActionCallback([&actions](LockscreenKeyboardAction action) { actions.push_back(action); });
@@ -48,6 +68,10 @@ int main() {
   expect(model.symbolMode(), "symbol mode turns on");
   model.typeCharacter('@');
   expect(actions.back().character == '@', "symbol character action is preserved");
+  model.typeCharacter('<');
+  expect(actions.back().character == '<', "less-than character action is preserved");
+  model.typeCharacter('>');
+  expect(actions.back().character == '>', "greater-than character action is preserved");
   model.showLetters();
   expect(!model.symbolMode(), "ABC returns to letters");
   model.typeCharacter('b');

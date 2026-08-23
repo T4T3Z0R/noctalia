@@ -76,6 +76,8 @@ namespace {
           button.setControlHeight(52.0F);
           button.setFlexGrow(grow);
           button.setMinWidth(0.0F);
+          button.inputArea()->setFocusable(false);
+          button.setTabStop(false);
         },
     });
     auto* result = key.get();
@@ -144,7 +146,7 @@ LockscreenKeyboard::LockscreenKeyboard(Node& parent) {
   addCharacterRow(*m_symbolRows, "1234567890");
   addCharacterRow(*m_symbolRows, "!@#$%^&*()");
   addCharacterRow(*m_symbolRows, "-_=+[]{}\\|");
-  addCharacterRow(*m_symbolRows, ";:'\",./?`~");
+  addCharacterRow(*m_symbolRows, ";:'\",.<>/?`~");
   addControlRow(*m_symbolRows, true);
 
   parent.addChild(std::move(root));
