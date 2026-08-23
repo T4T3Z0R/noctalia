@@ -461,6 +461,7 @@ namespace desktop_settings {
       add(std::move(showWeather));
       add(boolSpec("show_login_button", true));
       add(boolSpec("show_password_reveal", true));
+      add(boolSpec("show_osk_button", false));
       add(boolSpec("show_unlock_hint", true));
       add(boolSpec("show_caps_lock", true));
       add(boolSpec("show_keyboard_layout", true));
