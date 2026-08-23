@@ -30,6 +30,7 @@ namespace lockscreen_login_box {
   constexpr std::string_view kInputRadiusKey = "input_radius";
   constexpr std::string_view kCenterPasswordTextKey = "center_password_text";
   constexpr std::string_view kShowLoginButtonKey = "show_login_button";
+  constexpr std::string_view kShowOskButtonKey = "show_osk_button";
   constexpr std::string_view kShowCapsLockKey = "show_caps_lock";
   constexpr std::string_view kShowKeyboardLayoutKey = "show_keyboard_layout";
   constexpr std::string_view kShowUnlockHintKey = "show_unlock_hint";
@@ -48,6 +49,7 @@ namespace lockscreen_login_box {
     float inputRadius = 6.0F;
     bool centerPasswordText = false;
     bool showLoginButton = true;
+    bool showOskButton = false;
     bool showCapsLock = true;
     bool showKeyboardLayout = true;
     bool showSessionButtons = true;
