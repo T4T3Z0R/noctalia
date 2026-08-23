@@ -1,16 +1,16 @@
-name: Build Arch penfix package
+name: Build Arch custom package
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - pen-tablet-v2
+      - custom
 
 permissions:
   contents: read
 
 concurrency:
-  group: arch-penfix-${{ github.ref }}
+  group: arch-custom-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -43,7 +43,7 @@ jobs:
             nlohmann-json stb \
             jemalloc just clang
 
-      - name: Checkout pen branch
+      - name: Checkout custom branch
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -82,7 +82,7 @@ jobs:
 
           base_tag="$(git describe --tags --abbrev=0)"
           base_ver="${base_tag#v}"
-          pkgver="${base_ver//-/_}.penfix.${short_sha}"
+          pkgver="${base_ver//-/_}.custom.${short_sha}"
 
           mkdir -p .github-package
 
@@ -92,10 +92,10 @@ jobs:
             HEAD > .github-package/noctalia-src.tar.gz
 
           cat > .github-package/PKGBUILD <<'PKGBUILD'
-          pkgname=noctalia-penfix
+          pkgname=noctalia-custom
           pkgver=@PKGVER@
           pkgrel=1
-          pkgdesc='Noctalia desktop shell with Surface tablet-v2 pen support'
+          pkgdesc='Noctalia desktop shell with locally maintained custom features'
           arch=('x86_64')
           url='https://github.com/T4T3Z0R/noctalia'
           license=('MIT')
@@ -188,7 +188,7 @@ jobs:
             find .github-package \
               -maxdepth 1 \
               -type f \
-              -name 'noctalia-penfix-*.pkg.tar.zst' \
+              -name 'noctalia-custom-*.pkg.tar.zst' \
               -print -quit
           )"
 
@@ -208,7 +208,7 @@ jobs:
       - name: Upload Arch package
         uses: actions/upload-artifact@v4
         with:
-          name: noctalia-penfix-${{ env.PKGVER }}-${{ github.sha }}
+          name: noctalia-custom-${{ env.PKGVER }}-${{ github.sha }}
           path: package-output/*.pkg.tar.zst
           if-no-files-found: error
           retention-days: 30
@@ -216,7 +216,7 @@ jobs:
       - name: Build summary
         run: |
           {
-            echo '## Noctalia penfix Arch package'
+            echo '## Noctalia custom Arch package'
             echo
             echo "- Commit: \`${GITHUB_SHA}\`"
             echo "- Package: \`${PACKAGE_FILE}\`"
