@@ -140,7 +140,8 @@ jobs:
           )
 
           provides=('noctalia')
-          conflicts=('noctalia' 'noctalia-bin' 'noctalia-git')
+          conflicts=('noctalia' 'noctalia-bin' 'noctalia-git' 'noctalia-penfix')
+          replaces=('noctalia-penfix')
 
           options=('!debug')
 
