@@ -318,6 +318,7 @@ namespace lockscreen_login_box {
     style.inputRadius = std::clamp(readFloat(settings, kInputRadiusKey, style.inputRadius), 0.0F, 32.0F);
     style.centerPasswordText = readBool(settings, kCenterPasswordTextKey, style.centerPasswordText);
     style.showLoginButton = readBool(settings, kShowLoginButtonKey, style.showLoginButton);
+    style.showOskButton = readBool(settings, kShowOskButtonKey, style.showOskButton);
     style.showCapsLock = readBool(settings, kShowCapsLockKey, style.showCapsLock);
     style.showKeyboardLayout = readBool(settings, kShowKeyboardLayoutKey, style.showKeyboardLayout);
     style.showSessionButtons = readBool(settings, kShowSessionButtonsKey, style.showSessionButtons);
@@ -336,6 +337,7 @@ namespace lockscreen_login_box {
       settings.insert_or_assign(std::string(kShowMediaKey), true);
       settings.insert_or_assign(std::string(kShowWeatherKey), true);
       settings.insert_or_assign(std::string(kShowLoginButtonKey), true);
+      settings.insert_or_assign(std::string(kShowOskButtonKey), false);
       settings.insert_or_assign(std::string(kShowCapsLockKey), true);
       settings.insert_or_assign(std::string(kShowKeyboardLayoutKey), true);
       settings.insert_or_assign(std::string(kShowUnlockHintKey), true);
@@ -375,6 +377,9 @@ namespace lockscreen_login_box {
     }
     if (!settings.contains(std::string(kShowLoginButtonKey))) {
       settings.insert_or_assign(std::string(kShowLoginButtonKey), true);
+    }
+    if (!settings.contains(std::string(kShowOskButtonKey))) {
+      settings.insert_or_assign(std::string(kShowOskButtonKey), false);
     }
     if (!settings.contains(std::string(kShowCapsLockKey))) {
       settings.insert_or_assign(std::string(kShowCapsLockKey), true);
