@@ -1,4 +1,4 @@
-name: Update pen tablet branch
+name: Update custom branch
 
 on:
   workflow_dispatch:
@@ -17,13 +17,13 @@ permissions:
   actions: write
 
 concurrency:
-  group: update-pen-tablet-v2
+  group: update-custom
   cancel-in-progress: false
 
 env:
   UPSTREAM_REPO: noctalia-dev/noctalia
-  PEN_BRANCH: pen-tablet-v2
-  CANDIDATE_BRANCH: automation/pen-tablet-v2-candidate
+  CUSTOM_BRANCH: custom
+  CANDIDATE_BRANCH: automation/custom-candidate
   TABLET_MARKER_BRANCH: automation/upstream-tablet-detected
   BUILD_WORKFLOW: build-arch-package.yml
 
@@ -36,7 +36,7 @@ jobs:
       changed: ${{ steps.check.outputs.changed }}
       current_tag: ${{ steps.check.outputs.current_tag }}
       latest_tag: ${{ steps.check.outputs.latest_tag }}
-      pen_sha: ${{ steps.check.outputs.pen_sha }}
+      custom_sha: ${{ steps.check.outputs.custom_sha }}
       upstream_support: ${{ steps.check.outputs.upstream_support }}
       support_already_reported: ${{ steps.check.outputs.support_already_reported }}
 
@@ -59,7 +59,7 @@ jobs:
               "https://github.com/${UPSTREAM_REPO}.git"
 
           git fetch origin \
-            "${PEN_BRANCH}:refs/remotes/origin/${PEN_BRANCH}"
+            "${CUSTOM_BRANCH}:refs/remotes/origin/${CUSTOM_BRANCH}"
 
           git fetch --force upstream \
             'refs/tags/*:refs/tags/*'
@@ -73,11 +73,11 @@ jobs:
             git describe \
               --tags \
               --abbrev=0 \
-              "origin/${PEN_BRANCH}"
+              "origin/${CUSTOM_BRANCH}"
           )"
 
-          pen_sha="$(
-            git rev-parse "origin/${PEN_BRANCH}"
+          custom_sha="$(
+            git rev-parse "origin/${CUSTOM_BRANCH}"
           )"
 
           latest_sha="$(
@@ -122,15 +122,15 @@ jobs:
             echo "changed=${changed}"
             echo "current_tag=${current_tag}"
             echo "latest_tag=${latest_tag}"
-            echo "pen_sha=${pen_sha}"
+            echo "custom_sha=${custom_sha}"
             echo "upstream_support=${upstream_support}"
             echo "support_already_reported=${support_already_reported}"
           } >> "${GITHUB_OUTPUT}"
 
           {
-            echo '## Noctalia pen updater'
+            echo '## Noctalia custom updater'
             echo
-            echo "- Current pen base: \`${current_tag}\`"
+            echo "- Current custom base: \`${current_tag}\`"
             echo "- Latest upstream: \`${latest_tag}\`"
             echo "- Update needed: \`${changed}\`"
             echo "- Upstream tablet-v2 detected: \`${upstream_support}\`"
@@ -192,10 +192,10 @@ jobs:
       candidate_sha: ${{ steps.rebase.outputs.candidate_sha }}
 
     steps:
-      - name: Checkout pen branch
+      - name: Checkout custom branch
         uses: actions/checkout@v6
         with:
-          ref: pen-tablet-v2
+          ref: ${{ env.CUSTOM_BRANCH }}
           fetch-depth: 0
 
       - name: Rebase onto new release
@@ -343,36 +343,36 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Update pen branch
+      - name: Update custom branch
         run: |
           set -euo pipefail
 
           git fetch origin \
-            "${PEN_BRANCH}:refs/remotes/origin/${PEN_BRANCH}" \
+            "${CUSTOM_BRANCH}:refs/remotes/origin/${CUSTOM_BRANCH}" \
             "${CANDIDATE_BRANCH}:refs/remotes/origin/${CANDIDATE_BRANCH}"
 
-          actual_pen_sha="$(
+          actual_custom_sha="$(
             git rev-parse \
-              "origin/${PEN_BRANCH}"
+              "origin/${CUSTOM_BRANCH}"
           )"
 
-          expected_pen_sha="${{ needs.check.outputs.pen_sha }}"
+          expected_custom_sha="${{ needs.check.outputs.custom_sha }}"
           candidate_sha="${{ needs.prepare.outputs.candidate_sha }}"
 
-          if [[ "${actual_pen_sha}" != "${expected_pen_sha}" ]]; then
-            echo "pen-tablet-v2 moved while the candidate was building."
-            echo "Expected: ${expected_pen_sha}"
-            echo "Actual:   ${actual_pen_sha}"
+          if [[ "${actual_custom_sha}" != "${expected_custom_sha}" ]]; then
+            echo "custom moved while the candidate was building."
+            echo "Expected: ${expected_custom_sha}"
+            echo "Actual:   ${actual_custom_sha}"
             echo "Refusing to overwrite it."
             exit 1
           fi
 
           git push origin \
-            "${candidate_sha}:refs/heads/${PEN_BRANCH}" \
-            --force-with-lease="refs/heads/${PEN_BRANCH}:${expected_pen_sha}"
+            "${candidate_sha}:refs/heads/${CUSTOM_BRANCH}" \
+            --force-with-lease="refs/heads/${CUSTOM_BRANCH}:${expected_custom_sha}"
 
           {
-            echo '## Pen branch updated'
+            echo '## Custom branch updated'
             echo
             echo "- Release: \`${{ needs.check.outputs.latest_tag }}\`"
             echo "- Commit: \`${candidate_sha}\`"
@@ -446,7 +446,7 @@ jobs:
             exit 1
           fi
 
-          title="Noctalia penfix"
+          title="Noctalia custom"
           message="The updater completed with an unexpected state."
 
           if [[ "${TEST_PUSHOVER}" == "true" ]]; then
@@ -459,17 +459,17 @@ jobs:
             title="Noctalia upstream tablet support"
             message="Upstream ${LATEST_TAG} appears to contain tablet-v2 support. The custom pen patch was left unchanged and needs manual review."
           elif [[ "${PROMOTE_RESULT}" == "success" ]]; then
-            title="Noctalia penfix updated"
-            message="Validated and promoted pen-tablet-v2 from ${CURRENT_TAG} to ${LATEST_TAG}."
+            title="Noctalia custom updated"
+            message="Validated and promoted custom from ${CURRENT_TAG} to ${LATEST_TAG}."
           elif [[ "${PREPARE_RESULT}" == "failure" ]]; then
-            title="Noctalia penfix update FAILED"
-            message="Rebase onto ${LATEST_TAG} failed. The existing pen-tablet-v2 branch remains unchanged."
+            title="Noctalia custom update FAILED"
+            message="Rebase onto ${LATEST_TAG} failed. The existing custom branch remains unchanged."
           elif [[ "${VALIDATE_RESULT}" == "failure" ]]; then
-            title="Noctalia penfix update FAILED"
-            message="Build, test, lint, or package validation for ${LATEST_TAG} failed. The existing pen-tablet-v2 branch remains unchanged."
+            title="Noctalia custom update FAILED"
+            message="Build, test, lint, or package validation for ${LATEST_TAG} failed. The existing custom branch remains unchanged."
           elif [[ "${PROMOTE_RESULT}" == "failure" ]]; then
-            title="Noctalia penfix update FAILED"
-            message="Validation passed for ${LATEST_TAG}, but promotion of pen-tablet-v2 failed. Manual review is required."
+            title="Noctalia custom update FAILED"
+            message="Validation passed for ${LATEST_TAG}, but promotion of custom failed. Manual review is required."
           fi
 
           curl --fail --silent --show-error \
