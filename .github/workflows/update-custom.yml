@@ -13,8 +13,7 @@ on:
       timezone: "America/New_York"
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
 
 concurrency:
   group: update-custom
@@ -152,6 +151,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          token: ${{ secrets.CUSTOM_BRANCH_TOKEN }}
 
       - name: Record detected upstream release
         run: |
@@ -197,6 +197,7 @@ jobs:
         with:
           ref: ${{ env.CUSTOM_BRANCH }}
           fetch-depth: 0
+          token: ${{ secrets.CUSTOM_BRANCH_TOKEN }}
 
       - name: Rebase onto new release
         id: rebase
@@ -242,6 +243,10 @@ jobs:
     needs:
       - check
       - prepare
+
+    permissions:
+      contents: read
+      actions: write
 
     runs-on: ubuntu-latest
 
@@ -342,6 +347,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          token: ${{ secrets.CUSTOM_BRANCH_TOKEN }}
 
       - name: Update custom branch
         run: |
@@ -420,6 +426,9 @@ jobs:
       - promote
 
     if: always() && needs.prepare.result == 'success'
+
+    permissions:
+      contents: write
 
     runs-on: ubuntu-latest
 
