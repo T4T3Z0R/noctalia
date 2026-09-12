@@ -576,9 +576,10 @@ void TaskbarWidget::setEntryPinned(const DesktopEntry& entry, bool pinned) {
   } else {
     shell::dock::pinned_apps::removeEntry(pinnedList, entry);
   }
-  if (m_configService.setOverride({"widget", m_widgetName, "pinned"}, pinnedList)) {
-    m_configOptions.pinned = std::move(pinnedList);
-  }
+  ConfigService* config = &m_configService;
+  DeferredCall::callLater([config, widgetName = m_widgetName, pinned = std::move(pinnedList)]() mutable {
+    (void)config->setOverride({"widget", widgetName, "pinned"}, std::move(pinned));
+  });
 }
 
 void TaskbarWidget::launchDesktopEntry(const TaskModel& task) {
