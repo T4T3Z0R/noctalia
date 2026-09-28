@@ -30,6 +30,7 @@
 #include "dbus/polkit/polkit_poll_source.h"
 #include "dbus/polkit/polkit_session_support.h"
 #include "dbus/power/power_profiles_service.h"
+#include "dbus/secret/secret_collection_probe.h"
 #include "dbus/session_bus.h"
 #include "dbus/session_bus_poll_source.h"
 #include "dbus/system_bus.h"
@@ -115,7 +116,6 @@ namespace {
   constexpr std::string_view kSecretServiceBusName = "org.freedesktop.secrets";
   constexpr auto kSecretServiceObjectPath = "/org/freedesktop/secrets";
   constexpr auto kSecretServiceInterface = "org.freedesktop.Secret.Service";
-  constexpr auto kSecretCollectionInterface = "org.freedesktop.Secret.Collection";
 
   void signal_handler(int signum) {
     if (signum == SIGTERM || signum == SIGINT) {
@@ -265,6 +265,9 @@ void Application::installSecretServiceNameWatch() {
         if (name != kSecretServiceBusName) {
           return;
         }
+        if (m_secretServiceCollectionProbe != nullptr) {
+          m_secretServiceCollectionProbe->invalidate();
+        }
         m_secretServiceOwned = !newOwner.empty();
         if (!m_secretServiceOwned) {
           return;
@@ -273,7 +276,14 @@ void Application::installSecretServiceNameWatch() {
         m_storageKeyAutoRetried = false;
         m_calendarCredentialAutoRetried = false;
         kLog.info("secret service provider appeared on {}", kSecretServiceBusName);
-        DeferredCall::callLater([this]() { retrySecretServiceConsumers(); });
+        DeferredCall::callLater([this]() {
+          const bool retryWillProbeCollection =
+              m_storageKeyProvider.state() == security::StorageKeyState::DeniedOrLocked;
+          retrySecretServiceConsumers();
+          if (!retryWillProbeCollection) {
+            onSecretServiceCollectionChanged();
+          }
+        });
       });
   m_secretServiceNameWatchInstalled = true;
 
@@ -300,8 +310,18 @@ void Application::installSecretServiceCollectionWatch() {
         m_bus->connection(), sdbus::ServiceName{std::string{kSecretServiceBusName}},
         sdbus::ObjectPath{kSecretServiceObjectPath}
     );
+    m_secretServiceCollectionProbe = std::make_unique<SecretCollectionProbe>(*m_bus, [this](bool unlocked) {
+      if (!unlocked || !m_secretServiceOwned) {
+        return;
+      }
+      // Reachable and unlocked now: give every consumer that gave up at startup a fresh attempt. The
+      // follow-up lookup reads the unlocked collection without raising a prompt.
+      m_storageKeyAutoRetried = false;
+      m_calendarCredentialAutoRetried = false;
+      kLog.info("secret service default collection unlocked; reopening consumers");
+      retrySecretServiceConsumers(true);
+    });
     // A collection appearing or changing is our cue that the default one may have just unlocked.
-    // Read the state out of the signal callback to avoid a nested synchronous D-Bus call.
     const auto onCollectionEvent = [this](const sdbus::ObjectPath& /*collection*/) {
       DeferredCall::callLater([this]() { onSecretServiceCollectionChanged(); });
     };
@@ -318,61 +338,33 @@ void Application::installSecretServiceCollectionWatch() {
     DeferredCall::callLater([this]() { onSecretServiceCollectionChanged(); });
   } catch (const sdbus::Error& e) {
     kLog.debug("secret service collection watch setup failed: {}", e.what());
+    m_secretServiceCollectionProbe.reset();
     m_secretServiceCollectionWatchProxy.reset();
   }
 }
 
 void Application::onSecretServiceCollectionChanged() {
-  if (!defaultSecretCollectionUnlocked()) {
+  if (!m_secretServiceOwned || m_secretServiceCollectionProbe == nullptr) {
     return;
   }
-  // Reachable and unlocked now: give every consumer that gave up at startup a fresh attempt. The
-  // follow-up lookup reads the unlocked collection without raising a prompt.
-  m_secretServiceOwned = true;
-  m_storageKeyAutoRetried = false;
-  m_calendarCredentialAutoRetried = false;
-  kLog.info("secret service default collection unlocked; reopening consumers");
-  retrySecretServiceConsumers();
+  m_secretServiceCollectionProbe->request();
 }
 
-bool Application::defaultSecretCollectionUnlocked() {
-  if (m_bus == nullptr || m_secretServiceCollectionWatchProxy == nullptr) {
-    return false;
-  }
-  try {
-    sdbus::ObjectPath collection;
-    m_secretServiceCollectionWatchProxy->callMethod("ReadAlias")
-        .onInterface(kSecretServiceInterface)
-        .withArguments(std::string{"default"})
-        .storeResultsTo(collection);
-    const std::string collectionPath{collection};
-    if (collectionPath.empty() || collectionPath == "/") {
-      return false;
-    }
-    auto collectionProxy =
-        sdbus::createProxy(m_bus->connection(), sdbus::ServiceName{std::string{kSecretServiceBusName}}, collection);
-    return !collectionProxy->getProperty("Locked").onInterface(kSecretCollectionInterface).get<bool>();
-  } catch (const sdbus::Error& e) {
-    kLog.debug("secret default collection state check failed: {}", e.what());
-    return false;
-  }
-}
-
-void Application::retrySecretServiceConsumers() {
+void Application::retrySecretServiceConsumers(bool defaultCollectionUnlocked) {
   if (!m_secretServiceOwned) {
     return;
   }
   // A locked storage key is only worth reopening once the collection is actually unlocked: a lookup
   // then reads silently, whereas retrying while still locked would raise a second keyring prompt.
-  // The one-shot latch is tested first so the collection probe (two blocking D-Bus calls) is skipped
-  // once a retry is already in flight.
   const security::StorageKeyState storageKeyState = m_storageKeyProvider.state();
   if (!m_storageKeyAutoRetried
       && (storageKeyState == security::StorageKeyState::Unavailable
-          || (storageKeyState == security::StorageKeyState::DeniedOrLocked && defaultSecretCollectionUnlocked()))) {
+          || (storageKeyState == security::StorageKeyState::DeniedOrLocked && defaultCollectionUnlocked))) {
     m_storageKeyAutoRetried = true;
     kLog.info("secret service is running; reopening encrypted storage");
     DeferredCall::callLater([this]() { m_storageKeyProvider.retry(); });
+  } else if (!m_storageKeyAutoRetried && storageKeyState == security::StorageKeyState::DeniedOrLocked) {
+    onSecretServiceCollectionChanged();
   }
   const calendar::CredentialState calendarCredentialState = m_calendarService.credentialState();
   const bool calendarRetryNeeded = calendarCredentialState == calendar::CredentialState::Unavailable

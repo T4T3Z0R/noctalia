@@ -495,6 +495,7 @@ _noctalia_sources = files(
   'src/dbus/notification/notification_poll_source.cpp',
   'src/dbus/notification/notification_service.cpp',
   'src/dbus/power/power_profiles_service.cpp',
+  'src/dbus/secret/secret_collection_probe.cpp',
   'src/dbus/session_bus.cpp',
   'src/dbus/system_bus.cpp',
   'src/dbus/tray/fcitx_status.cpp',
@@ -1307,6 +1308,11 @@ if build_tests
     sources: files('tests/upower_charge_limit_integration_test.cpp'),
     dependencies: noctalia_core_dep,
   )
+  secret_collection_probe_integration_exe = executable('secret_collection_probe_integration_test',
+    sources: files('tests/secret_collection_probe_integration_test.cpp'),
+    dependencies: noctalia_core_dep,
+    override_options: ['b_ndebug=false'],
+  )
   dbus_run_session = find_program('dbus-run-session', required: false)
   if dbus_run_session.found()
     test('upower_charge_limit_integration',
@@ -1317,6 +1323,11 @@ if build_tests
         'sh', upower_integration_exe.full_path(),
       ],
       depends: upower_integration_exe,
+    )
+    test('secret_collection_probe_integration',
+      dbus_run_session,
+      args: ['--', secret_collection_probe_integration_exe.full_path()],
+      depends: secret_collection_probe_integration_exe,
     )
   endif
 
