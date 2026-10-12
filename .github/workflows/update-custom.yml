@@ -25,6 +25,7 @@ env:
   CANDIDATE_BRANCH: automation/custom-candidate
   TABLET_MARKER_BRANCH: automation/upstream-tablet-detected
   TASKBAR_MARKER_BRANCH: automation/upstream-taskbar-pin-fix-detected
+  SECRET_SERVICE_MARKER_BRANCH: automation/upstream-secret-service-detected
   BUILD_WORKFLOW: build-arch-package.yml
 
 jobs:
@@ -41,6 +42,8 @@ jobs:
       support_already_reported: ${{ steps.check.outputs.support_already_reported }}
       taskbar_review: ${{ steps.check.outputs.taskbar_review }}
       taskbar_review_already_reported: ${{ steps.check.outputs.taskbar_review_already_reported }}
+      secret_service_review: ${{ steps.check.outputs.secret_service_review }}
+      secret_service_already_reported: ${{ steps.check.outputs.secret_service_already_reported }}
 
     steps:
       - name: Checkout control branch
@@ -65,6 +68,10 @@ jobs:
 
           git fetch --force upstream \
             'refs/tags/*:refs/tags/*'
+
+          # This fix may not be reachable from any released tag yet.
+          secret_service_fix=17b1258e77742fd25dbb9c912b1d27dd350de32b
+          git fetch upstream "${secret_service_fix}"
 
           latest_tag="$(
             gh api "repos/${UPSTREAM_REPO}/releases/latest" \
@@ -91,6 +98,8 @@ jobs:
           support_already_reported=false
           taskbar_review=false
           taskbar_review_already_reported=false
+          secret_service_review=false
+          secret_service_already_reported=false
 
           if [[ "${latest_tag}" != "${current_tag}" ]]; then
             changed=true
@@ -152,6 +161,35 @@ jobs:
                 fi
               fi
             fi
+
+            if git merge-base --is-ancestor \
+                 "${secret_service_fix}" "${latest_sha}" &&
+               git log --format=%s \
+                 "${current_tag}..origin/${CUSTOM_BRANCH}" |
+                 grep -Fx \
+                   'fix(tray): avoid watcher deadlock during secret service probing' \
+                   >/dev/null
+            then
+              secret_service_review=true
+
+              git fetch origin \
+                "${SECRET_SERVICE_MARKER_BRANCH}:refs/remotes/origin/${SECRET_SERVICE_MARKER_BRANCH}" \
+                2>/dev/null || true
+
+              if git rev-parse \
+                   "origin/${SECRET_SERVICE_MARKER_BRANCH}" \
+                   >/dev/null 2>&1
+              then
+                marker_sha="$(
+                  git rev-parse \
+                    "origin/${SECRET_SERVICE_MARKER_BRANCH}"
+                )"
+
+                if [[ "${marker_sha}" == "${latest_sha}" ]]; then
+                  secret_service_already_reported=true
+                fi
+              fi
+            fi
           fi
 
           {
@@ -163,6 +201,8 @@ jobs:
             echo "support_already_reported=${support_already_reported}"
             echo "taskbar_review=${taskbar_review}"
             echo "taskbar_review_already_reported=${taskbar_review_already_reported}"
+            echo "secret_service_review=${secret_service_review}"
+            echo "secret_service_already_reported=${secret_service_already_reported}"
           } >> "${GITHUB_OUTPUT}"
 
           {
@@ -173,6 +213,8 @@ jobs:
             echo "- Update needed: \`${changed}\`"
             echo "- Upstream tablet-v2 detected: \`${upstream_support}\`"
             echo "- Upstream setEntryPinned changed: \`${taskbar_review}\`"
+            echo "- Secret Service patch review needed: \`${secret_service_review}\`"
+            echo "- Secret Service release already reported: \`${secret_service_already_reported}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
   upstream-support:
@@ -189,7 +231,8 @@ jobs:
         (
           needs.check.outputs.taskbar_review == 'true' &&
           needs.check.outputs.taskbar_review_already_reported != 'true'
-        )
+        ) ||
+        needs.check.outputs.secret_service_review == 'true'
       )
 
     runs-on: ubuntu-latest
@@ -238,6 +281,10 @@ jobs:
             echo "::error::Upstream ${{ needs.check.outputs.latest_tag }} changed TaskbarWidget::setEntryPinned(). Review whether the downstream taskbar pin lifetime fix is still needed."
           fi
 
+          if [[ "${{ needs.check.outputs.secret_service_review }}" == "true" ]]; then
+            echo "::error::Upstream ${{ needs.check.outputs.latest_tag }} contains the Secret Service fix. The downstream Secret Service cherry-pick must be reviewed and retired before automatic updates can resume."
+          fi
+
           exit 1
 
   prepare:
@@ -247,6 +294,7 @@ jobs:
     if: >-
       needs.check.outputs.changed == 'true' &&
       needs.check.outputs.upstream_support != 'true' &&
+      needs.check.outputs.secret_service_review != 'true' &&
       (
         needs.check.outputs.taskbar_review != 'true' ||
         needs.check.outputs.taskbar_review_already_reported == 'true'
@@ -406,6 +454,8 @@ jobs:
       - prepare
       - validate
 
+    if: needs.check.outputs.secret_service_review != 'true'
+
     runs-on: ubuntu-latest
 
     steps:
@@ -535,6 +585,10 @@ jobs:
             (
               needs.check.outputs.taskbar_review == 'true' &&
               needs.check.outputs.taskbar_review_already_reported != 'true'
+            ) ||
+            (
+              needs.check.outputs.secret_service_review == 'true' &&
+              needs.check.outputs.secret_service_already_reported != 'true'
             )
           )
         ) ||
@@ -548,6 +602,7 @@ jobs:
 
     steps:
       - name: Send Pushover notification
+        id: pushover
         env:
           PUSHOVER_APP_TOKEN: ${{ secrets.PUSHOVER_APP_TOKEN }}
           PUSHOVER_USER_KEY: ${{ secrets.PUSHOVER_USER_KEY }}
@@ -557,6 +612,8 @@ jobs:
           LATEST_TAG: ${{ needs.check.outputs.latest_tag }}
           UPSTREAM_SUPPORT: ${{ needs.check.outputs.upstream_support }}
           TASKBAR_REVIEW: ${{ needs.check.outputs.taskbar_review }}
+          SECRET_SERVICE_REVIEW: ${{ needs.check.outputs.secret_service_review }}
+          SECRET_SERVICE_ALREADY_REPORTED: ${{ needs.check.outputs.secret_service_already_reported }}
           PREPARE_RESULT: ${{ needs.prepare.result }}
           VALIDATE_RESULT: ${{ needs.validate.result }}
           PROMOTE_RESULT: ${{ needs.promote.result }}
@@ -572,6 +629,7 @@ jobs:
 
           title="Noctalia custom"
           message="The updater completed with an unexpected state."
+          secret_service_notified=false
 
           if [[ "${TEST_PUSHOVER}" == "true" ]]; then
             title="Noctalia updater test"
@@ -588,6 +646,9 @@ jobs:
           elif [[ "${TASKBAR_REVIEW}" == "true" ]]; then
             title="Noctalia upstream taskbar change"
             message="Upstream ${LATEST_TAG} changed TaskbarWidget::setEntryPinned(). Review whether the downstream taskbar pin lifetime fix is still needed."
+          elif [[ "${SECRET_SERVICE_REVIEW}" == "true" ]]; then
+            title="Noctalia upstream patch review"
+            message="Upstream ${LATEST_TAG} requires downstream patch review."
           elif [[ "${PREPARE_RESULT}" == "failure" ]]; then
             title="Noctalia custom update FAILED"
             message="Rebase onto ${LATEST_TAG} failed. The existing custom branch remains unchanged."
@@ -602,7 +663,15 @@ jobs:
             message="Custom was promoted to ${LATEST_TAG}, but dispatch to the central package publisher failed. The signed repository was not updated."
           fi
 
-          curl --fail --silent --show-error \
+          if [[ "${TEST_PUSHOVER}" != "true" && "${CHECK_RESULT}" == "success" && "${SECRET_SERVICE_REVIEW}" == "true" ]]; then
+            title="Noctalia upstream patch review"
+            message+=" It contains the Secret Service fix. The downstream Secret Service cherry-pick must be reviewed and retired before automatic updates can resume."
+            if [[ "${SECRET_SERVICE_ALREADY_REPORTED}" != "true" ]]; then
+              secret_service_notified=true
+            fi
+          fi
+
+          response="$(curl --fail --silent --show-error \
             --retry 3 \
             --retry-all-errors \
             --max-time 30 \
@@ -612,4 +681,34 @@ jobs:
             --form-string "message=${message}" \
             --form-string "url=${RUN_URL}" \
             --form-string "url_title=Open GitHub Actions run" \
-            https://api.pushover.net/1/messages.json
+            https://api.pushover.net/1/messages.json)"
+
+          # HTTP success alone must not suppress retries if Pushover rejected it.
+          jq -e '.status == 1' <<< "${response}" >/dev/null
+          echo "secret_service_notified=${secret_service_notified}" >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout repository to record Secret Service notification
+        if: steps.pushover.outputs.secret_service_notified == 'true'
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.CUSTOM_BRANCH_TOKEN }}
+
+      - name: Record notified Secret Service release
+        if: steps.pushover.outputs.secret_service_notified == 'true'
+        env:
+          LATEST_TAG: ${{ needs.check.outputs.latest_tag }}
+        run: |
+          set -euo pipefail
+
+          git remote add upstream \
+            "https://github.com/${UPSTREAM_REPO}.git" 2>/dev/null \
+            || git remote set-url upstream \
+              "https://github.com/${UPSTREAM_REPO}.git"
+
+          git fetch --force upstream \
+            "refs/tags/${LATEST_TAG}:refs/tags/${LATEST_TAG}"
+
+          latest_sha="$(git rev-list -n 1 "${LATEST_TAG}")"
+          git push --force origin \
+            "${latest_sha}:refs/heads/${SECRET_SERVICE_MARKER_BRANCH}"
