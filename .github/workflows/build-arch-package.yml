@@ -42,7 +42,7 @@ jobs:
             libqalculate libxml2 \
             md4c tomlplusplus libical \
             nlohmann-json stb \
-            jemalloc just clang
+            jemalloc just clang clang22
 
       - name: Checkout source
         uses: actions/checkout@v6
@@ -65,7 +65,7 @@ jobs:
             find src \( -name '*.cpp' -o -name '*.h' \) -print0
           )
 
-          clang-format --dry-run -Werror "${files[@]}"
+          /usr/lib/llvm22/bin/clang-format --dry-run -Werror "${files[@]}"
 
       - name: Build, test, and lint source
         run: |
