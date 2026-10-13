@@ -1,0 +1,91 @@
+name: Validate Noctalia custom source
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - custom
+
+permissions:
+  contents: read
+
+concurrency:
+  group: noctalia-source-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-source:
+    name: Format, build, test, and lint
+    runs-on: ubuntu-latest
+
+    container:
+      image: archlinux:latest
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Install Arch build dependencies
+        run: |
+          set -euo pipefail
+
+          pacman -Syu --noconfirm --needed \
+            base-devel git meson ninja pkgconf \
+            wayland wayland-protocols \
+            libglvnd freetype2 fontconfig noto-fonts \
+            cairo pango harfbuzz \
+            libxkbcommon glib2 \
+            libsecret libsodium \
+            sdbus-cpp libpipewire wireplumber polkit \
+            pam curl libwebp libjxl libsndfile librsvg \
+            libqalculate libxml2 \
+            md4c tomlplusplus libical \
+            nlohmann-json stb \
+            jemalloc just clang clang22
+
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Create build user
+        run: |
+          set -euo pipefail
+
+          useradd -m builduser
+          chown -R builduser:builduser "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Check formatting
+        run: |
+          set -euo pipefail
+
+          mapfile -d '' files < <(
+            find src tests \( -name '*.cpp' -o -name '*.h' \) -print0
+          )
+
+          /usr/lib/llvm22/bin/clang-format --dry-run -Werror "${files[@]}"
+
+      - name: Build, test, and lint source
+        run: |
+          set -euo pipefail
+
+          su builduser -c "cd '$GITHUB_WORKSPACE' && just build"
+          su builduser -c "cd '$GITHUB_WORKSPACE' && just test debug --print-errorlogs"
+          su builduser -c "cd '$GITHUB_WORKSPACE' && just lint"
+
+      - name: Validation summary
+        run: |
+          {
+            echo '## Noctalia custom source validation'
+            echo
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo '- Arch Linux validation environment'
+            echo '- Formatting: **PASSED**'
+            echo '- Build: **PASSED**'
+            echo '- Tests: **PASSED**'
+            echo '- Lint: **PASSED**'
+            echo
+            echo 'Packaging, license validation, signing, and publication are handled by T4T3Z0R/packages.'
+          } >> "$GITHUB_STEP_SUMMARY"
