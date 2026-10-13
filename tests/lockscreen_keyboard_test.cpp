@@ -1,7 +1,7 @@
-#include "shell/lockscreen/lockscreen_keyboard.h"
-#include "shell/lockscreen/lockscreen_login_box.h"
 #include "render/scene/input_area.h"
 #include "render/scene/node.h"
+#include "shell/lockscreen/lockscreen_keyboard.h"
+#include "shell/lockscreen/lockscreen_login_box.h"
 #include "ui/controls/button.h"
 
 #include <functional>
@@ -56,8 +56,10 @@ int main() {
   model.toggleShift();
   expect(model.oneShotShift(), "Shift turns on");
   model.typeCharacter('a');
-  expect(actions.back().type == LockscreenKeyboardActionType::Character && actions.back().character == 'A',
-         "Shift uppercases one character");
+  expect(
+      actions.back().type == LockscreenKeyboardActionType::Character && actions.back().character == 'A',
+      "Shift uppercases one character"
+  );
   expect(!model.oneShotShift(), "Shift turns off after one character");
 
   model.toggleShift();
@@ -75,8 +77,10 @@ int main() {
   model.showLetters();
   expect(!model.symbolMode(), "ABC returns to letters");
   model.typeCharacter('b');
-  expect(actions.back().type == LockscreenKeyboardActionType::Character && actions.back().character == 'b',
-         "letter character emits its semantic action");
+  expect(
+      actions.back().type == LockscreenKeyboardActionType::Character && actions.back().character == 'b',
+      "letter character emits its semantic action"
+  );
 
   model.backspace();
   expect(actions.back().type == LockscreenKeyboardActionType::Backspace, "Backspace emits its semantic action");
