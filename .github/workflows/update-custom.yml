@@ -24,7 +24,6 @@ env:
   CUSTOM_BRANCH: custom
   CANDIDATE_BRANCH: automation/custom-candidate
   TABLET_MARKER_BRANCH: automation/upstream-tablet-detected
-  TASKBAR_MARKER_BRANCH: automation/upstream-taskbar-pin-fix-detected
   BUILD_WORKFLOW: build-arch-package.yml
 
 jobs:
@@ -39,8 +38,6 @@ jobs:
       custom_sha: ${{ steps.check.outputs.custom_sha }}
       upstream_support: ${{ steps.check.outputs.upstream_support }}
       support_already_reported: ${{ steps.check.outputs.support_already_reported }}
-      taskbar_review: ${{ steps.check.outputs.taskbar_review }}
-      taskbar_review_already_reported: ${{ steps.check.outputs.taskbar_review_already_reported }}
 
     steps:
       - name: Checkout control branch
@@ -89,8 +86,6 @@ jobs:
           changed=false
           upstream_support=false
           support_already_reported=false
-          taskbar_review=false
-          taskbar_review_already_reported=false
 
           if [[ "${latest_tag}" != "${current_tag}" ]]; then
             changed=true
@@ -120,38 +115,6 @@ jobs:
                 fi
               fi
             fi
-
-            current_taskbar="$(
-              git show "${current_tag}:src/shell/bar/widgets/taskbar_widget.cpp" 2>/dev/null |
-                sed -n '/^void TaskbarWidget::setEntryPinned/,/^}/p' || true
-            )"
-
-            latest_taskbar="$(
-              git show "${latest_tag}:src/shell/bar/widgets/taskbar_widget.cpp" 2>/dev/null |
-                sed -n '/^void TaskbarWidget::setEntryPinned/,/^}/p' || true
-            )"
-
-            if [[ "${latest_taskbar}" != "${current_taskbar}" ]]; then
-              taskbar_review=true
-
-              git fetch origin \
-                "${TASKBAR_MARKER_BRANCH}:refs/remotes/origin/${TASKBAR_MARKER_BRANCH}" \
-                2>/dev/null || true
-
-              if git rev-parse \
-                   "origin/${TASKBAR_MARKER_BRANCH}" \
-                   >/dev/null 2>&1
-              then
-                marker_sha="$(
-                  git rev-parse \
-                    "origin/${TASKBAR_MARKER_BRANCH}"
-                )"
-
-                if [[ "${marker_sha}" == "${latest_sha}" ]]; then
-                  taskbar_review_already_reported=true
-                fi
-              fi
-            fi
           fi
 
           {
@@ -161,8 +124,6 @@ jobs:
             echo "custom_sha=${custom_sha}"
             echo "upstream_support=${upstream_support}"
             echo "support_already_reported=${support_already_reported}"
-            echo "taskbar_review=${taskbar_review}"
-            echo "taskbar_review_already_reported=${taskbar_review_already_reported}"
           } >> "${GITHUB_OUTPUT}"
 
           {
@@ -172,7 +133,6 @@ jobs:
             echo "- Latest upstream: \`${latest_tag}\`"
             echo "- Update needed: \`${changed}\`"
             echo "- Upstream tablet-v2 detected: \`${upstream_support}\`"
-            echo "- Upstream setEntryPinned changed: \`${taskbar_review}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
   upstream-support:
@@ -181,16 +141,8 @@ jobs:
 
     if: >-
       needs.check.outputs.changed == 'true' &&
-      (
-        (
-          needs.check.outputs.upstream_support == 'true' &&
-          needs.check.outputs.support_already_reported != 'true'
-        ) ||
-        (
-          needs.check.outputs.taskbar_review == 'true' &&
-          needs.check.outputs.taskbar_review_already_reported != 'true'
-        )
-      )
+      needs.check.outputs.upstream_support == 'true' &&
+      needs.check.outputs.support_already_reported != 'true'
 
     runs-on: ubuntu-latest
 
@@ -223,19 +175,10 @@ jobs:
               "${latest_sha}:refs/heads/${TABLET_MARKER_BRANCH}"
           fi
 
-          if [[ "${{ needs.check.outputs.taskbar_review }}" == "true" ]]; then
-            git push --force origin \
-              "${latest_sha}:refs/heads/${TASKBAR_MARKER_BRANCH}"
-          fi
-
       - name: Stop for manual review
         run: |
           if [[ "${{ needs.check.outputs.upstream_support }}" == "true" ]]; then
             echo "::error::Upstream ${{ needs.check.outputs.latest_tag }} appears to contain tablet-v2 support. The custom pen patch may no longer be needed."
-          fi
-
-          if [[ "${{ needs.check.outputs.taskbar_review }}" == "true" ]]; then
-            echo "::error::Upstream ${{ needs.check.outputs.latest_tag }} changed TaskbarWidget::setEntryPinned(). Review whether the downstream taskbar pin lifetime fix is still needed."
           fi
 
           exit 1
@@ -246,11 +189,7 @@ jobs:
 
     if: >-
       needs.check.outputs.changed == 'true' &&
-      needs.check.outputs.upstream_support != 'true' &&
-      (
-        needs.check.outputs.taskbar_review != 'true' ||
-        needs.check.outputs.taskbar_review_already_reported == 'true'
-      )
+      needs.check.outputs.upstream_support != 'true'
 
     runs-on: ubuntu-latest
 
@@ -305,7 +244,7 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
 
   validate:
-    name: Validate candidate package
+    name: Validate candidate source
     needs:
       - check
       - prepare
@@ -320,7 +259,7 @@ jobs:
       build_run_id: ${{ steps.validate.outputs.build_run_id }}
 
     steps:
-      - name: Dispatch package workflow and wait
+      - name: Dispatch source validation workflow and wait
         id: validate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -353,7 +292,7 @@ jobs:
           echo "build_run_id=${build_run_id}" \
             >> "${GITHUB_OUTPUT}"
 
-          echo "Dispatched package run ${build_run_id}"
+          echo "Dispatched source validation run ${build_run_id}"
 
           while true; do
             run_json="$(
@@ -374,7 +313,7 @@ jobs:
                 <<< "${run_json}"
             )"
 
-            echo "Package workflow: ${status}${conclusion:+ / ${conclusion}}"
+            echo "Source validation workflow: ${status}${conclusion:+ / ${conclusion}}"
 
             if [[ "${status}" == "completed" ]]; then
               break
@@ -391,7 +330,7 @@ jobs:
           {
             echo '## Candidate validation'
             echo
-            echo "- Package workflow: ${html_url}"
+            echo "- Source validation workflow: ${html_url}"
             echo "- Result: \`${conclusion}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
@@ -448,7 +387,7 @@ jobs:
             echo
             echo "- Release: \`${{ needs.check.outputs.latest_tag }}\`"
             echo "- Commit: \`${candidate_sha}\`"
-            echo "- Package workflow run: \`${{ needs.validate.outputs.build_run_id }}\`"
+            echo "- Source validation run: \`${{ needs.validate.outputs.build_run_id }}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
   package_publish:
@@ -527,16 +466,8 @@ jobs:
         (
           needs.check.result == 'success' &&
           needs.check.outputs.changed == 'true' &&
-          (
-            (
-              needs.check.outputs.upstream_support == 'true' &&
-              needs.check.outputs.support_already_reported != 'true'
-            ) ||
-            (
-              needs.check.outputs.taskbar_review == 'true' &&
-              needs.check.outputs.taskbar_review_already_reported != 'true'
-            )
-          )
+          needs.check.outputs.upstream_support == 'true' &&
+          needs.check.outputs.support_already_reported != 'true'
         ) ||
         needs.prepare.result == 'failure' ||
         needs.validate.result == 'failure' ||
@@ -556,7 +487,6 @@ jobs:
           CURRENT_TAG: ${{ needs.check.outputs.current_tag }}
           LATEST_TAG: ${{ needs.check.outputs.latest_tag }}
           UPSTREAM_SUPPORT: ${{ needs.check.outputs.upstream_support }}
-          TASKBAR_REVIEW: ${{ needs.check.outputs.taskbar_review }}
           PREPARE_RESULT: ${{ needs.prepare.result }}
           VALIDATE_RESULT: ${{ needs.validate.result }}
           PROMOTE_RESULT: ${{ needs.promote.result }}
@@ -579,21 +509,15 @@ jobs:
           elif [[ "${CHECK_RESULT}" != "success" ]]; then
             title="Noctalia update check FAILED"
             message="The upstream release check failed before an update decision could be made."
-          elif [[ "${UPSTREAM_SUPPORT}" == "true" && "${TASKBAR_REVIEW}" == "true" ]]; then
-            title="Noctalia upstream patch review"
-            message="Upstream ${LATEST_TAG} appears to contain tablet-v2 support and changed TaskbarWidget::setEntryPinned(). Both downstream patches need manual review."
           elif [[ "${UPSTREAM_SUPPORT}" == "true" ]]; then
             title="Noctalia upstream tablet support"
             message="Upstream ${LATEST_TAG} appears to contain tablet-v2 support. The custom pen patch was left unchanged and needs manual review."
-          elif [[ "${TASKBAR_REVIEW}" == "true" ]]; then
-            title="Noctalia upstream taskbar change"
-            message="Upstream ${LATEST_TAG} changed TaskbarWidget::setEntryPinned(). Review whether the downstream taskbar pin lifetime fix is still needed."
           elif [[ "${PREPARE_RESULT}" == "failure" ]]; then
             title="Noctalia custom update FAILED"
             message="Rebase onto ${LATEST_TAG} failed. The existing custom branch remains unchanged."
           elif [[ "${VALIDATE_RESULT}" == "failure" ]]; then
             title="Noctalia custom update FAILED"
-            message="Build, test, lint, or package validation for ${LATEST_TAG} failed. The existing custom branch remains unchanged."
+            message="Source validation (formatting, build, tests, or lint) for ${LATEST_TAG} failed. The existing custom branch remains unchanged."
           elif [[ "${PROMOTE_RESULT}" == "failure" ]]; then
             title="Noctalia custom update FAILED"
             message="Validation passed for ${LATEST_TAG}, but promotion of custom failed. Manual review is required."
