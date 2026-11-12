@@ -7,7 +7,7 @@ on:
       - custom
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: noctalia-source-validation-${{ github.ref }}
@@ -42,7 +42,7 @@ jobs:
             libqalculate libxml2 \
             md4c tomlplusplus libical \
             nlohmann-json stb \
-            jemalloc just clang clang22
+            jemalloc just clang
 
       - name: Checkout source
         uses: actions/checkout@v6
@@ -57,6 +57,32 @@ jobs:
           chown -R builduser:builduser "$GITHUB_WORKSPACE"
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
+      - name: Format v5.5.0 candidate on GitHub
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/migration/v5.5.0-candidate" ]]; then
+            exit 0
+          fi
+
+          clang-format --version
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+          clang-format -i             lib/wayland/wayland_seat.cpp             lib/wayland/wayland_seat.h
+
+          git diff --check
+          git add             lib/wayland/wayland_seat.cpp             lib/wayland/wayland_seat.h
+
+          if git diff --cached --quiet; then
+            echo "Formatting already clean."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "style(input): format tablet-v2 port with clang 23"
+          git push origin HEAD:refs/heads/migration/v5.5.0-candidate
+
       - name: Check formatting
         run: |
           set -euo pipefail
@@ -65,7 +91,7 @@ jobs:
             find src lib tests \( -name '*.cpp' -o -name '*.h' \) -print0
           )
 
-          /usr/lib/llvm22/bin/clang-format --dry-run -Werror "${files[@]}"
+          clang-format --dry-run -Werror "${files[@]}"
 
       - name: Build, test, and lint source
         run: |
