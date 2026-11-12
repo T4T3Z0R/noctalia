@@ -30,6 +30,7 @@ struct zxdg_output_manager_v1;
 struct zxdg_output_v1;
 struct xdg_wm_base;
 struct wp_cursor_shape_manager_v1;
+struct zwp_tablet_manager_v2;
 struct xdg_activation_v1;
 struct zwp_text_input_manager_v3;
 struct wp_fractional_scale_manager_v1;
@@ -256,6 +257,7 @@ private:
   zxdg_output_manager_v1* m_xdgOutputManager = nullptr;
   xdg_wm_base* m_xdgWmBase = nullptr;
   wp_cursor_shape_manager_v1* m_cursorShapeManager = nullptr;
+  zwp_tablet_manager_v2* m_tabletManager = nullptr;
   xdg_activation_v1* m_xdgActivation = nullptr;
   wp_fractional_scale_manager_v1* m_fractionalScaleManager = nullptr;
   OutputMetadataSource m_outputMetadataSource;
