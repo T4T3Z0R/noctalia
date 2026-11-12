@@ -87,6 +87,8 @@ foreach _noctalia_ui_p : [
     _noctalia_ui_protos_dir / 'staging/fractional-scale/fractional-scale-v1.xml'],
   ['viewporter',
     _noctalia_ui_protos_dir / 'stable/viewporter/viewporter.xml'],
+  ['tablet-unstable-v2',
+    _noctalia_ui_protos_dir / 'unstable/tablet/tablet-unstable-v2.xml'],
   ['text-input-unstable-v3', files('protocols/text-input-unstable-v3.xml')],
   ['cursor-shape-v1', files('protocols/cursor-shape-v1.xml')],
 ]

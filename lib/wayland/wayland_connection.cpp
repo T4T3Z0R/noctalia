@@ -4,6 +4,7 @@
 #include "core/process/process_fds.h"
 #include "cursor-shape-v1-client-protocol.h"
 #include "fractional-scale-v1-client-protocol.h"
+#include "tablet-unstable-v2-client-protocol.h"
 #include "text-input-unstable-v3-client-protocol.h"
 #include "viewporter-client-protocol.h"
 #include "wayland/text_input_service.h"
@@ -35,6 +36,7 @@ namespace {
   constexpr std::uint32_t kXdgOutputManagerVersion = 3;
   constexpr std::uint32_t kXdgWmBaseVersion = 6;
   constexpr std::uint32_t kCursorShapeManagerVersion = 1;
+  constexpr std::uint32_t kTabletManagerVersion = 1;
   constexpr std::uint32_t kXdgActivationVersion = 1;
   constexpr std::uint32_t kFractionalScaleManagerVersion = 1;
   constexpr std::uint32_t kViewporterVersion = 1;
@@ -1111,6 +1113,15 @@ void WaylandConnection::bindGlobal(
     return;
   }
 
+  if (interfaceName == zwp_tablet_manager_v2_interface.name) {
+    const auto bindVersion = std::min(version, kTabletManagerVersion);
+    m_tabletManager = static_cast<zwp_tablet_manager_v2*>(
+        wl_registry_bind(registry, name, &zwp_tablet_manager_v2_interface, bindVersion)
+    );
+    m_seatHandler.setTabletManager(m_tabletManager);
+    return;
+  }
+
   if (interfaceName == xdg_activation_v1_interface.name) {
     const auto bindVersion = std::min(version, kXdgActivationVersion);
     m_xdgActivation =
@@ -1206,6 +1217,11 @@ void WaylandConnection::cleanup() {
   }
 
   m_seatHandler.cleanup();
+
+  if (m_tabletManager != nullptr) {
+    zwp_tablet_manager_v2_destroy(m_tabletManager);
+    m_tabletManager = nullptr;
+  }
 
   if (m_xdgActivation != nullptr) {
     xdg_activation_v1_destroy(m_xdgActivation);
