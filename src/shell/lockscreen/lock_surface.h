@@ -9,6 +9,7 @@
 #include "render/scene/input_dispatcher.h"
 #include "render/scene/node.h"
 #include "shell/lockscreen/lockscreen_login_box.h"
+#include "shell/lockscreen/lockscreen_keyboard.h"
 #include "shell/render/blur_cache.h"
 #include "shell/render/lockscreen_transition_types.h"
 #include "ui/palette.h"
@@ -154,6 +155,7 @@ private:
   std::string resolveStatusText(const lockscreen_login_box::LoginBoxStyle& style, bool& isError) const;
   bool passwordFieldContainsPoint(float sceneX, float sceneY) const;
   void focusPasswordField();
+  void handleOskAction(LockscreenKeyboardAction action);
 
   ext_session_lock_surface_v1* m_lockSurface = nullptr;
   wl_output* m_output = nullptr;
@@ -194,6 +196,8 @@ private:
   Input* m_passwordField = nullptr;
   Button* m_passwordRevealButton = nullptr;
   Button* m_loginButton = nullptr;
+  Button* m_oskButton = nullptr;
+  std::unique_ptr<LockscreenKeyboard> m_osk;
   Button* m_layoutChip = nullptr;
   Flex* m_sessionRow = nullptr;
   std::vector<Button*> m_sessionButtons;

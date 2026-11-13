@@ -11,6 +11,7 @@
 #include "render/core/shared_texture_cache.h"
 #include "render/render_context.h"
 #include "shell/lockscreen/lockscreen_login_box.h"
+#include "shell/lockscreen/lockscreen_keyboard.h"
 #include "shell/lockscreen/lockscreen_session_actions.h"
 #include "shell/lockscreen/lockscreen_transition_cover.h"
 #include "shell/lockscreen/lockscreen_widgets_host.h"
@@ -564,6 +565,20 @@ LockSurface::LockSurface(WaylandConnection& connection, ConfigService* config) :
   );
 
   m_loginContentRow->addChild(
+      ui::button({
+          .out = &m_oskButton,
+          .glyph = "keyboard",
+          .variant = ButtonVariant::Secondary,
+          .visible = false,
+          .onClick = [this]() {
+            m_osk->visible() ? m_osk->hide() : m_osk->show();
+            focusPasswordField();
+            requestLayout();
+          },
+      })
+  );
+
+  m_loginContentRow->addChild(
       ui::input({
           .out = &m_passwordField,
           .placeholder = i18n::tr("lockscreen.password-placeholder"),
@@ -650,6 +665,8 @@ LockSurface::LockSurface(WaylandConnection& connection, ConfigService* config) :
   }
 
   m_inputDispatcher.setSceneRoot(&m_root);
+  m_osk = std::make_unique<LockscreenKeyboard>(m_root);
+  m_osk->setActionCallback([this](LockscreenKeyboardAction action) { handleOskAction(action); });
   m_inputDispatcher.setCursorShapeCallback([this](std::uint32_t serial, std::uint32_t shape) {
     m_connection.setCursorShape(serial, shape);
   });
@@ -754,6 +771,7 @@ void LockSurface::setLockedState(bool locked) {
     return;
   }
   m_locked = locked;
+  m_osk->reset();
   if (m_locked) {
     // Never carry a revealed password across lock cycles.
     if (m_passwordField != nullptr) {
@@ -1019,6 +1037,7 @@ void LockSurface::setBlackout(bool blackout) {
   invalidateSleepFrame();
   m_blackout = blackout;
   if (m_blackout) {
+    m_osk->reset();
     m_inputDispatcher.setFocus(nullptr);
     cancelTransitionAnimation();
     m_transitionPhase = TransitionPhase::Disabled;
@@ -1344,6 +1363,7 @@ void LockSurface::layoutScene(std::uint32_t width, std::uint32_t height) {
       m_passwordRevealButton->setVisible(false);
     }
     m_loginButton->setVisible(false);
+    m_oskButton->setVisible(false);
     if (m_infoRow != nullptr) {
       m_infoRow->setVisible(false);
     }
@@ -1368,6 +1388,9 @@ void LockSurface::layoutScene(std::uint32_t width, std::uint32_t height) {
   m_widgetLayer->setVisible(true);
   const bool loginVisible = isLoginBoxEnabled();
   const lockscreen_login_box::LoginBoxStyle loginStyle = resolveLoginStyle();
+  if (m_osk->visible() && (!loginVisible || !loginStyle.showOskButton)) {
+    m_osk->reset();
+  }
   m_loginPanel->setVisible(loginVisible);
   m_loginContentRow->setVisible(loginVisible);
   m_passwordField->setVisible(loginVisible);
@@ -1409,6 +1432,10 @@ void LockSurface::layoutScene(std::uint32_t width, std::uint32_t height) {
 
   panelX = util::clampOrdered(panelX, Style::spaceLg, sw - panelWidth - Style::spaceLg);
   panelY = util::clampOrdered(panelY, Style::spaceLg, sh - panelHeight - Style::spaceLg);
+  if (m_osk->visible()) {
+    panelY = std::min(panelY, std::max(Style::spaceLg, sh * 0.58F - panelHeight));
+    m_osk->arrange(renderer, sw, sh);
+  }
 
   m_root.setSize(sw, sh);
 
@@ -1668,6 +1695,13 @@ void LockSurface::layoutScene(std::uint32_t width, std::uint32_t height) {
     m_loginButton->setSize(controlHeight, controlHeight);
     m_loginButton->setGlyphSize(sessionGlyphSize);
   }
+  const bool showOskButton = loginVisible && loginStyle.showOskButton;
+  m_oskButton->setVisible(showOskButton);
+  if (showOskButton) {
+    m_oskButton->setSize(controlHeight, controlHeight);
+    m_oskButton->setGlyphSize(sessionGlyphSize);
+    m_oskButton->setRadius(Style::scaledRadius(loginStyle.inputRadius));
+  }
 
   if (m_passwordRevealButton != nullptr) {
     m_passwordRevealButton->setStyleRadius(loginStyle.inputRadius);
@@ -1718,6 +1752,29 @@ void LockSurface::layoutScene(std::uint32_t width, std::uint32_t height) {
   }
   layoutTransitionCover();
   syncTransitionCover();
+}
+
+void LockSurface::handleOskAction(LockscreenKeyboardAction action) {
+  if (!m_locked || m_blackout || m_authenticating) {
+    return;
+  }
+  focusPasswordField();
+  switch (action.type) {
+  case LockscreenKeyboardActionType::Character: {
+    const auto character = static_cast<std::uint32_t>(action.character);
+    m_inputDispatcher.keyEvent(character, character, 0, true);
+    break;
+  }
+  case LockscreenKeyboardActionType::Backspace:
+    m_inputDispatcher.keyEvent(XKB_KEY_BackSpace, 0, 0, true);
+    break;
+  case LockscreenKeyboardActionType::Submit:
+    if (m_onLogin) {
+      m_onLogin();
+    }
+    break;
+  }
+  requestLayout();
 }
 
 void LockSurface::updateCopy() {

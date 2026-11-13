@@ -68,10 +68,10 @@ jobs:
           clang-format --version
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-          clang-format -i             lib/wayland/wayland_seat.cpp             lib/wayland/wayland_seat.h
+          clang-format -i lib/wayland/wayland_seat.cpp lib/wayland/wayland_seat.h src/shell/lockscreen/lock_surface.cpp src/shell/lockscreen/lock_surface.h src/shell/lockscreen/lockscreen_keyboard.cpp src/shell/lockscreen/lockscreen_keyboard.h src/shell/lockscreen/lockscreen_login_box.cpp src/shell/lockscreen/lockscreen_login_box.h tests/lockscreen_keyboard_test.cpp
 
           git diff --check
-          git add             lib/wayland/wayland_seat.cpp             lib/wayland/wayland_seat.h
+          git add lib/wayland/wayland_seat.cpp lib/wayland/wayland_seat.h src/shell/lockscreen/lock_surface.cpp src/shell/lockscreen/lock_surface.h src/shell/lockscreen/lockscreen_keyboard.cpp src/shell/lockscreen/lockscreen_keyboard.h src/shell/lockscreen/lockscreen_login_box.cpp src/shell/lockscreen/lockscreen_login_box.h tests/lockscreen_keyboard_test.cpp
 
           if git diff --cached --quiet; then
             echo "Formatting already clean."
