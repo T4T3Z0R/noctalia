@@ -566,7 +566,7 @@ LockSurface::LockSurface(WaylandConnection& connection, ConfigService* config) :
           .glyph = "keyboard",
           .variant = ButtonVariant::Secondary,
           .visible = false,
-          .onClick = [this]() {
+          .onClick = [this] {
             m_osk->visible() ? m_osk->hide() : m_osk->show();
             focusPasswordField();
             requestLayout();
