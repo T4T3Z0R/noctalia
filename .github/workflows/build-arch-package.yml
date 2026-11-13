@@ -7,7 +7,7 @@ on:
       - custom
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: noctalia-source-validation-${{ github.ref }}
@@ -56,32 +56,6 @@ jobs:
           useradd -m builduser
           chown -R builduser:builduser "$GITHUB_WORKSPACE"
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-      - name: Format v5.5.0 candidate on GitHub
-        run: |
-          set -euo pipefail
-
-          if [[ "${GITHUB_REF}" != "refs/heads/migration/v5.5.0-candidate" ]]; then
-            exit 0
-          fi
-
-          clang-format --version
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-          clang-format -i lib/wayland/wayland_seat.cpp lib/wayland/wayland_seat.h src/shell/lockscreen/lock_surface.cpp src/shell/lockscreen/lock_surface.h src/shell/lockscreen/lockscreen_keyboard.cpp src/shell/lockscreen/lockscreen_keyboard.h src/shell/lockscreen/lockscreen_login_box.cpp src/shell/lockscreen/lockscreen_login_box.h tests/lockscreen_keyboard_test.cpp
-
-          git diff --check
-          git add lib/wayland/wayland_seat.cpp lib/wayland/wayland_seat.h src/shell/lockscreen/lock_surface.cpp src/shell/lockscreen/lock_surface.h src/shell/lockscreen/lockscreen_keyboard.cpp src/shell/lockscreen/lockscreen_keyboard.h src/shell/lockscreen/lockscreen_login_box.cpp src/shell/lockscreen/lockscreen_login_box.h tests/lockscreen_keyboard_test.cpp
-
-          if git diff --cached --quiet; then
-            echo "Formatting already clean."
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "style(input): format tablet-v2 port with clang 23"
-          git push origin HEAD:refs/heads/migration/v5.5.0-candidate
 
       - name: Check formatting
         run: |
