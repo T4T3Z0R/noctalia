@@ -127,17 +127,17 @@ LockscreenKeyboard::LockscreenKeyboard(Node& parent) {
   addCharacterRow(*m_letterRows, "qwertyuiop");
   addCharacterRow(*m_letterRows, "asdfghjkl");
   auto* letterControls = addRow(*m_letterRows);
-  m_shiftButton = addKey(*letterControls, "⇧", 1.4F, [this]() {
+  m_shiftButton = addKey(*letterControls, "⇧", 1.4F, [this] {
     m_model.toggleShift();
     syncState();
   });
   for (const char character : std::string_view{"zxcvbnm"}) {
-    addKey(*letterControls, std::string(1, static_cast<char>(std::toupper(character))), 1.0F, [this, character]() {
+    addKey(*letterControls, std::string(1, static_cast<char>(std::toupper(character))), 1.0F, [this, character] {
       m_model.typeCharacter(character);
       syncState();
     });
   }
-  addKey(*letterControls, "⌫", 1.4F, [this]() { m_model.backspace(); });
+  addKey(*letterControls, "⌫", 1.4F, [this] { m_model.backspace(); });
   addControlRow(*m_letterRows, false);
 
   m_root->addChild(
@@ -183,7 +183,7 @@ void LockscreenKeyboard::addCharacterRow(Flex& parent, std::string_view characte
   for (const char character : characters) {
     addKey(
         *row, std::string(1, static_cast<char>(std::toupper(static_cast<unsigned char>(character)))), 1.0F,
-        [this, character]() {
+        [this, character] {
           m_model.typeCharacter(character);
           syncState();
         }
@@ -193,7 +193,7 @@ void LockscreenKeyboard::addCharacterRow(Flex& parent, std::string_view characte
 
 void LockscreenKeyboard::addControlRow(Flex& parent, bool symbols) {
   auto* row = addRow(parent);
-  addKey(*row, symbols ? "ABC" : "?123", 1.5F, [this, symbols]() {
+  addKey(*row, symbols ? "ABC" : "?123", 1.5F, [this, symbols] {
     if (symbols) {
       m_model.showLetters();
     } else {
@@ -202,16 +202,16 @@ void LockscreenKeyboard::addControlRow(Flex& parent, bool symbols) {
     syncState();
   });
   if (!symbols) {
-    addKey(*row, ",", 1.0F, [this]() { m_model.typeCharacter(','); });
+    addKey(*row, ",", 1.0F, [this] { m_model.typeCharacter(','); });
   }
-  addKey(*row, "SPACE", 4.0F, [this]() { m_model.typeCharacter(' '); });
+  addKey(*row, "SPACE", 4.0F, [this] { m_model.typeCharacter(' '); });
   if (!symbols) {
-    addKey(*row, ".", 1.0F, [this]() { m_model.typeCharacter('.'); });
+    addKey(*row, ".", 1.0F, [this] { m_model.typeCharacter('.'); });
   }
   if (symbols) {
-    addKey(*row, "⌫", 1.5F, [this]() { m_model.backspace(); });
+    addKey(*row, "⌫", 1.5F, [this] { m_model.backspace(); });
   }
-  addKey(*row, "ENTER", 1.8F, [this]() { m_model.submit(); });
+  addKey(*row, "ENTER", 1.8F, [this] { m_model.submit(); });
 }
 
 void LockscreenKeyboard::syncState() {

@@ -94,10 +94,10 @@ int main() {
 
   std::unordered_map<std::string, WidgetSettingValue> settings;
   lockscreen_login_box::normalizeSettings(settings);
-  expect(std::get<bool>(settings.at("show_osk_button")) == false, "normalization defaults OSK button off");
+  expect(!std::get<bool>(settings.at("show_osk_button")), "normalization defaults OSK button off");
   settings.clear();
   lockscreen_login_box::applyAllDefaultSettings(settings);
-  expect(std::get<bool>(settings.at("show_osk_button")) == false, "new settings default OSK button off");
+  expect(!std::get<bool>(settings.at("show_osk_button")), "new settings default OSK button off");
   expect(!lockscreen_login_box::resolveStyle(settings).showOskButton, "resolved default hides OSK button");
   settings["show_osk_button"] = true;
   expect(lockscreen_login_box::resolveStyle(settings).showOskButton, "explicit setting shows OSK button");
