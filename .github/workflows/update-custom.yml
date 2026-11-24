@@ -3,6 +3,11 @@ name: Update custom branch
 on:
   workflow_dispatch:
     inputs:
+      test_custom_token:
+        description: Test custom branch credential without updating source
+        required: false
+        default: false
+        type: boolean
       test_pushover:
         description: Send a Pushover test notification
         required: false
@@ -27,7 +32,65 @@ env:
   BUILD_WORKFLOW: build-arch-package.yml
 
 jobs:
+  test-custom-token:
+    name: Test custom branch credential
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_custom_token }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Require retained credential
+        env:
+          CUSTOM_TOKEN: ${{ secrets.CUSTOM_BRANCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$CUSTOM_TOKEN" ]]; then
+            echo "::error::CUSTOM_BRANCH_TOKEN is missing."
+            exit 1
+          fi
+
+      - name: Checkout using retained credential
+        uses: actions/checkout@v6
+        with:
+          ref: custom
+          token: ${{ secrets.CUSTOM_BRANCH_TOKEN }}
+
+      - name: Verify temporary branch creation and deletion
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test "$GITHUB_REPOSITORY" = T4T3Z0R/noctalia
+
+          ref="refs/heads/automation/token-test-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          sha="$(git rev-parse HEAD)"
+
+          test -z "$(git ls-remote --heads origin "$ref")"
+
+          cleanup_probe() {
+            git push origin --delete "$ref" \
+              --force-with-lease="$ref:$sha"
+          }
+
+          git push origin "HEAD:$ref" \
+            --force-with-lease="$ref:"
+
+          trap cleanup_probe EXIT
+
+          test "$(git ls-remote --heads origin "$ref" |
+            cut -f1)" = "$sha"
+
+          echo 'PASS: Retained credential created temporary branch.'
+
+          cleanup_probe
+          trap - EXIT
+
+          test -z "$(git ls-remote --heads origin "$ref")"
+
+          echo 'PASS: Retained credential deleted temporary branch.'
+          echo 'PASS: CUSTOM_BRANCH_TOKEN write access verified.'
+
   check:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.test_custom_token }}
     name: Check upstream release
     runs-on: ubuntu-latest
 
@@ -390,39 +453,6 @@ jobs:
             echo "- Source validation run: \`${{ needs.validate.outputs.build_run_id }}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
-  package_publish:
-    name: Dispatch central package publisher
-    needs:
-      - prepare
-      - promote
-
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-
-    steps:
-      - name: Dispatch exact promoted commit
-        env:
-          GH_TOKEN: ${{ secrets.PACKAGES_DISPATCH_TOKEN }}
-          SOURCE_SHA: ${{ needs.prepare.outputs.candidate_sha }}
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${GH_TOKEN}" ]]; then
-            echo "::error::PACKAGES_DISPATCH_TOKEN is missing."
-            exit 1
-          fi
-
-          gh workflow run publish-noctalia-custom.yml --repo T4T3Z0R/packages --ref main -f source_ref="${SOURCE_SHA}"
-
-          {
-            echo '## Package publication dispatched'
-            echo
-            echo "- Source commit: \`${SOURCE_SHA}\`"
-            echo "- Publisher: \`T4T3Z0R/packages\`"
-          } >> "${GITHUB_STEP_SUMMARY}"
-
   cleanup:
     name: Remove candidate branch
     needs:
@@ -455,11 +485,11 @@ jobs:
       - prepare
       - validate
       - promote
-      - package_publish
       - cleanup
 
     if: >-
       always() &&
+      (github.event_name != 'workflow_dispatch' || !inputs.test_custom_token) &&
       (
         (github.event_name == 'workflow_dispatch' && inputs.test_pushover == true) ||
         needs.check.result == 'failure' ||
@@ -471,8 +501,7 @@ jobs:
         ) ||
         needs.prepare.result == 'failure' ||
         needs.validate.result == 'failure' ||
-        needs.promote.result == 'failure' ||
-        needs.package_publish.result == 'failure'
+        needs.promote.result == 'failure'
       )
 
     runs-on: ubuntu-latest
@@ -490,7 +519,6 @@ jobs:
           PREPARE_RESULT: ${{ needs.prepare.result }}
           VALIDATE_RESULT: ${{ needs.validate.result }}
           PROMOTE_RESULT: ${{ needs.promote.result }}
-          PACKAGE_PUBLISH_RESULT: ${{ needs.package_publish.result }}
           RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
@@ -521,9 +549,6 @@ jobs:
           elif [[ "${PROMOTE_RESULT}" == "failure" ]]; then
             title="Noctalia custom update FAILED"
             message="Validation passed for ${LATEST_TAG}, but promotion of custom failed. Manual review is required."
-          elif [[ "${PACKAGE_PUBLISH_RESULT}" == "failure" ]]; then
-            title="Noctalia package dispatch FAILED"
-            message="Custom was promoted to ${LATEST_TAG}, but dispatch to the central package publisher failed. The signed repository was not updated."
           fi
 
           curl --fail --silent --show-error \

@@ -1,0 +1,54 @@
+name: Lint control workflows
+
+on:
+  push:
+    branches:
+      - main
+      - 'fix/**'
+    paths:
+      - '.github/workflows/update-custom.yml'
+      - '.github/workflows/lint-control-workflows.yml'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/update-custom.yml'
+      - '.github/workflows/lint-control-workflows.yml'
+      - '.github/workflows/ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Validate control workflow syntax
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    container:
+      image: archlinux:latest
+
+    steps:
+      - name: Install workflow validation tools
+        run: |
+          pacman -Syu --noconfirm --needed \
+            git actionlint shellcheck
+
+      - name: Checkout workflow definitions
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Validate control workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          actionlint -version
+          shellcheck --version
+
+          actionlint -color \
+            .github/workflows/update-custom.yml \
+            .github/workflows/lint-control-workflows.yml \
+            .github/workflows/ci.yml
