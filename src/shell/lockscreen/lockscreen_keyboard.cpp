@@ -114,7 +114,7 @@ LockscreenKeyboard::LockscreenKeyboard(Node& parent) {
           .gap = Style::spaceXs,
           .paddingV = Style::spaceSm,
           .paddingH = Style::spaceSm,
-          .fill = colorSpecFromRole(ColorRole::Surface, 0.96F),
+          .fill = colorSpecFromRole(ColorRole::Surface, Style::lockscreenKeyboardOverlayAlpha),
           .widthPolicy = FlexSizePolicy::Fill,
           .heightPolicy = FlexSizePolicy::Fill,
           .visible = false,
