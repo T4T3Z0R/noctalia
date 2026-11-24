@@ -23,6 +23,8 @@ namespace Style {
   inline constexpr float progressMarkerWidth = 2.0F;
   inline constexpr float disabledOutlineAlpha = 0.5F;
   inline constexpr float disabledAlpha = 0.55F;
+  // Opacity of the lockscreen keyboard overlay.
+  inline constexpr float lockscreenKeyboardOverlayAlpha = 0.96F;
 
   inline constexpr float spaceXs = 4.0F;
   inline constexpr float spaceSm = 8.0F;
