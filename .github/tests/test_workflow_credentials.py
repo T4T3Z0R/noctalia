@@ -187,13 +187,11 @@ class CredentialPolicyTests(unittest.TestCase):
         )
 
         expected_jobs = {
-            "test-custom-token",
             "check",
             "upstream-support",
             "rebase-candidate",
-            "prepare",
+            "validate",
             "promote",
-            "cleanup",
         }
 
         actual_jobs = []
@@ -201,6 +199,11 @@ class CredentialPolicyTests(unittest.TestCase):
         for name, job, step in checkout_steps(workflow):
             with self.subTest(job=name):
                 actual_jobs.append(name)
+
+                self.assertEqual(
+                    step["uses"],
+                    "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+                )
 
                 self.assertIs(checkout_policy(step), False)
 
@@ -233,92 +236,159 @@ class CredentialPolicyTests(unittest.TestCase):
 
         jobs = workflow["jobs"]
 
-        rebase = jobs["rebase-candidate"]
-        prepare = jobs["prepare"]
+        self.assertEqual(set(jobs), {
+            "check",
+            "upstream-support",
+            "rebase-candidate",
+            "validate",
+            "promote",
+            "notify",
+        })
 
-        self.assertEqual(rebase["needs"], "check")
+        self.assertEqual(jobs["rebase-candidate"]["needs"], "check")
+
         self.assertEqual(
-            prepare["needs"],
+            jobs["validate"]["needs"],
             ["check", "rebase-candidate"],
         )
 
         self.assertEqual(
-            rebase["permissions"],
-            {"contents": "read"},
+            jobs["promote"]["needs"],
+            ["check", "rebase-candidate", "validate"],
         )
 
         self.assertEqual(
-            prepare["permissions"],
-            {"contents": "read"},
+            jobs["notify"]["needs"],
+            [
+                "check",
+                "upstream-support",
+                "rebase-candidate",
+                "validate",
+                "promote",
+            ],
         )
 
-        self.assertNotIn("secrets.", str(rebase))
-        self.assertNotIn("CUSTOM_GIT_TOKEN", str(rebase))
-        self.assertNotIn("authenticated_git", str(rebase))
+        for name in (
+            "check",
+            "upstream-support",
+            "rebase-candidate",
+            "validate",
+            "promote",
+        ):
+            self.assertEqual(
+                jobs[name]["permissions"],
+                {"contents": "read"},
+            )
+
+        self.assertEqual(jobs["notify"]["permissions"], {})
+
+        for name in ("rebase-candidate", "validate"):
+            job = jobs[name]
+
+            self.assertNotIn("secrets.", str(job))
+            self.assertNotIn("CUSTOM_GIT_TOKEN", str(job))
+            self.assertNotIn("authenticated_git", str(job))
+            self.assertNotIn("environment", job)
+
+        self.assertNotIn("outputs", jobs["validate"])
+
+        self.assertNotIn(
+            "needs.validate.outputs",
+            str(jobs["promote"]),
+        )
 
         self.assertEqual(
-            prepare["outputs"]["candidate_sha"],
-            "${{ steps.publish.outputs.candidate_sha }}",
-        )
-
-        publish = find_step(
-            prepare,
-            "Publish exact candidate reference",
-        )
-
-        receive = find_step(
-            prepare,
-            "Verify and import candidate objects",
-        )
-
-        self.assertNotIn("secrets.", str(receive))
-        self.assertNotIn("CUSTOM_GIT_TOKEN", str(receive))
-
-        self.assertLess(
-            prepare["steps"].index(receive),
-            prepare["steps"].index(publish),
+            jobs["promote"]["environment"],
+            "noctalia-source-promotion",
         )
 
         self.assertEqual(
-            publish["env"]["CUSTOM_GIT_TOKEN"],
-            "${{ secrets.CUSTOM_BRANCH_TOKEN }}",
+            jobs["upstream-support"]["environment"],
+            "noctalia-candidate",
         )
 
-        self.assertIn("git init --bare", receive["run"])
-        self.assertIn("candidate-bundle.sh", receive["run"])
-        self.assertIn("authenticated_git push", publish["run"])
+        for name in ("validate", "promote"):
+            job = jobs[name]
 
-        self.assertNotIn("git checkout", receive["run"])
-        self.assertNotIn("git checkout", publish["run"])
+            receivers = [
+                step for step in job["steps"]
+                if "receive-candidate.sh" in step.get("run", "")
+            ]
+
+            self.assertEqual(len(receivers), 1)
+
+            receiver = receivers[0]
+
+            self.assertNotIn("secrets.", str(receiver))
+
+            self.assertEqual(
+                receiver["env"]["CANDIDATE_SHA"],
+                "${{ needs.rebase-candidate.outputs.candidate_sha }}",
+            )
+
+            self.assertEqual(
+                receiver["env"]["BUNDLE_SHA256"],
+                "${{ needs.rebase-candidate.outputs.bundle_sha256 }}",
+            )
+
+            self.assertEqual(
+                receiver["env"]["LATEST_SHA"],
+                "${{ needs.check.outputs.latest_sha }}",
+            )
+
+            self.assertEqual(
+                receiver["env"]["LATEST_TAG"],
+                "${{ needs.check.outputs.latest_tag }}",
+            )
+
+        promotion = jobs["promote"]
+
+        self.assertNotIn("git checkout", str(promotion))
+        self.assertNotIn("just build", str(promotion))
+        self.assertNotIn("just test", str(promotion))
+        self.assertNotIn("just lint", str(promotion))
+
+        push = find_step(promotion, "Update custom branch")
+
+        self.assertEqual(
+            push["env"]["CANDIDATE_SHA"],
+            "${{ needs.rebase-candidate.outputs.candidate_sha }}",
+        )
+
+        self.assertEqual(
+            push["env"]["EXPECTED_CUSTOM_SHA"],
+            "${{ needs.check.outputs.custom_sha }}",
+        )
+
+        self.assertIn(
+            "--force-with-lease=refs/heads/custom:",
+            push["run"],
+        )
+
 
     def test_artifact_identity_binding(self):
         workflow = load_workflow(
             (WORKFLOWS / "update-custom.yml").read_text()
         )
 
-        rebase = workflow["jobs"]["rebase-candidate"]
-        prepare = workflow["jobs"]["prepare"]
+        jobs = workflow["jobs"]
+        rebase = jobs["rebase-candidate"]
 
         upload = find_step(
             rebase,
             "Upload exact candidate bundle",
         )
 
-        download = find_step(
-            prepare,
-            "Download exact candidate bundle",
-        )
-
         self.assertEqual(upload["id"], "upload")
+
+        self.assertEqual(
+            upload["uses"],
+            "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+        )
 
         self.assertEqual(
             rebase["outputs"]["artifact_id"],
             "${{ steps.upload.outputs.artifact-id }}",
-        )
-
-        self.assertEqual(
-            download["with"]["artifact-ids"],
-            "${{ needs.rebase-candidate.outputs.artifact_id }}",
         )
 
         self.assertEqual(
@@ -331,22 +401,84 @@ class CredentialPolicyTests(unittest.TestCase):
             "error",
         )
 
+        expected_id = (
+            "${{ needs.rebase-candidate.outputs.artifact_id }}"
+        )
+
+        for name, download_name in (
+            ("validate", "Download exact candidate bundle"),
+            ("promote", "Download original candidate bundle"),
+        ):
+            job = jobs[name]
+
+            guard = find_step(
+                job,
+                "Require exact artifact identity",
+            )
+
+            download = find_step(job, download_name)
+
+            self.assertEqual(
+                download["uses"],
+                "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+            )
+
+            self.assertEqual(
+                guard["env"]["ARTIFACT_ID"],
+                expected_id,
+            )
+
+            self.assertIn(
+                '[[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]',
+                guard["run"],
+            )
+
+            self.assertLess(
+                job["steps"].index(guard),
+                job["steps"].index(download),
+            )
+
+            self.assertEqual(
+                download["with"],
+                {
+                    "artifact-ids": expected_id,
+                    "path":
+                        "${{ runner.temp }}/candidate-transfer",
+                },
+            )
+
+            receivers = [
+                step for step in job["steps"]
+                if "receive-candidate.sh" in step.get("run", "")
+            ]
+
+            self.assertEqual(len(receivers), 1)
+
+            self.assertLess(
+                job["steps"].index(download),
+                job["steps"].index(receivers[0]),
+            )
+
+            downloads = [
+                step for step in job["steps"]
+                if step.get("uses", "").startswith(
+                    "actions/download-artifact@"
+                )
+            ]
+
+            self.assertEqual(downloads, [download])
+
+
     def test_authenticated_consumers(self):
         workflow = load_workflow(
             (WORKFLOWS / "update-custom.yml").read_text()
         )
 
         expected = {
-            "test-custom-token":
-                "Verify temporary branch creation and deletion",
             "upstream-support":
                 "Record exact upstream marker",
-            "prepare":
-                "Publish exact candidate reference",
             "promote":
                 "Update custom branch",
-            "cleanup":
-                "Delete temporary candidate",
         }
 
         actual = {}
@@ -361,6 +493,32 @@ class CredentialPolicyTests(unittest.TestCase):
 
                     actual[name] = step["name"]
                     run = step["run"]
+
+                    expected_credentials = {
+                        "upstream-support": (
+                            "marker",
+                            "${{ steps.marker-token.outputs.token }}",
+                        ),
+                        "promote": (
+                            "promotion",
+                            "${{ secrets.CUSTOM_BRANCH_TOKEN }}",
+                        ),
+                    }
+
+                    role, credential = expected_credentials[name]
+
+                    self.assertEqual(
+                        step["env"]["CUSTOM_GIT_ROLE"],
+                        role,
+                    )
+
+                    self.assertEqual(
+                        step["env"]["CUSTOM_GIT_TOKEN"],
+                        credential,
+                    )
+
+                    self.assertIn("--force-with-lease=", run)
+                    self.assertNotIn("--delete", run)
 
                     self.assertNotIn("${{", run)
 
@@ -387,6 +545,309 @@ class CredentialPolicyTests(unittest.TestCase):
 
         self.assertEqual(actual, expected)
 
+    def test_protected_credential_inventory(self):
+        expected = {
+            "CUSTOM_BRANCH_TOKEN": {
+                ("update-custom.yml", "promote"),
+            },
+            "NOCTALIA_CANDIDATE_APP_PRIVATE_KEY": {
+                ("update-custom.yml", "upstream-support"),
+            },
+        }
+
+        actual = {name: set() for name in expected}
+        environments = {}
+
+        paths = sorted(
+            list(WORKFLOWS.glob("*.yml"))
+            + list(WORKFLOWS.glob("*.yaml"))
+        )
+
+        for path in paths:
+            document = load_workflow(path.read_text())
+
+            for job_name, job in document["jobs"].items():
+                identity = (path.name, job_name)
+
+                for credential in expected:
+                    if f"secrets.{credential}" in str(job):
+                        actual[credential].add(identity)
+
+                if "environment" in job:
+                    environments[identity] = job["environment"]
+
+        self.assertEqual(actual, expected)
+
+        self.assertEqual(
+            environments,
+            {
+                ("update-custom.yml", "upstream-support"):
+                    "noctalia-candidate",
+                ("update-custom.yml", "promote"):
+                    "noctalia-source-promotion",
+            },
+        )
+
+    def test_marker_installation_token(self):
+        workflow = load_workflow(
+            (WORKFLOWS / "update-custom.yml").read_text()
+        )
+
+        job = workflow["jobs"]["upstream-support"]
+
+        token = find_step(
+            job,
+            "Create restricted marker installation token",
+        )
+
+        self.assertEqual(token["id"], "marker-token")
+
+        self.assertEqual(
+            token["uses"],
+            "actions/create-github-app-token@"
+            "29824e69f54612133e76f7eaac726eef6c875baf",
+        )
+
+        self.assertEqual(
+            token["with"],
+            {
+                "app-id":
+                    "${{ vars.NOCTALIA_CANDIDATE_APP_ID }}",
+                "private-key":
+                    "${{ secrets.NOCTALIA_CANDIDATE_APP_PRIVATE_KEY }}",
+                "owner": "T4T3Z0R",
+                "repositories": "noctalia",
+                "permission-contents": "write",
+                "skip-token-revoke": False,
+            },
+        )
+
+        resolve = find_step(
+            job,
+            "Resolve detected upstream release",
+        )
+
+        publish = find_step(
+            job,
+            "Record exact upstream marker",
+        )
+
+        self.assertLess(
+            job["steps"].index(resolve),
+            job["steps"].index(token),
+        )
+
+        self.assertLess(
+            job["steps"].index(token),
+            job["steps"].index(publish),
+        )
+
+        self.assertIn(
+            "upstream-marker.sh",
+            resolve["run"],
+        )
+
+        self.assertIn(
+            "upstream-marker.sh",
+            publish["run"],
+        )
+
+        self.assertIn(
+            "--force-with-lease=$ref:$EXPECTED_PREVIOUS",
+            publish["run"],
+        )
+
+    def test_release_discovery_isolation(self):
+        workflow = load_workflow(
+            (WORKFLOWS / "update-custom.yml").read_text()
+        )
+
+        check = workflow["jobs"]["check"]
+        compare = find_step(check, "Compare releases")
+        run = compare["run"]
+
+        self.assertIn("git init --bare --template=", run)
+
+        self.assertIn(
+            "refs/heads/custom:refs/remotes/origin/custom",
+            run,
+        )
+
+        self.assertIn(
+            "fetch --no-tags origin",
+            run,
+        )
+
+        self.assertIn(
+            "fetch --no-tags upstream",
+            run,
+        )
+
+        self.assertNotIn("git fetch --force upstream", run)
+        self.assertIn("git tag --points-at", run)
+
+        self.assertIn("if latest < current:", run)
+
+        self.assertIn(
+            "Upstream release version regressed.",
+            run,
+        )
+        self.assertIn("grep_status > 1", run)
+
+    def test_marker_discovery_revision_binding(self):
+        workflow = load_workflow(
+            (WORKFLOWS / "update-custom.yml").read_text()
+        )
+
+        jobs = workflow["jobs"]
+        check = jobs["check"]
+
+        self.assertEqual(
+            check["outputs"]["marker_revision"],
+            "${{ steps.check.outputs.marker_revision }}",
+        )
+
+        compare = find_step(check, "Compare releases")
+
+        self.assertIn(
+            "marker_revision=absent",
+            compare["run"],
+        )
+
+        self.assertIn(
+            'marker_revision="$marker_sha"',
+            compare["run"],
+        )
+
+        resolve = find_step(
+            jobs["upstream-support"],
+            "Resolve detected upstream release",
+        )
+
+        self.assertEqual(
+            resolve["env"]["OBSERVED_MARKER"],
+            "${{ needs.check.outputs.marker_revision }}",
+        )
+
+        self.assertIn(
+            'previous="$OBSERVED_MARKER"',
+            resolve["run"],
+        )
+
+        self.assertIn(
+            '[[ "$marker_record" != "$expected_record" ]]',
+            resolve["run"],
+        )
+
+        publish = find_step(
+            jobs["upstream-support"],
+            "Record exact upstream marker",
+        )
+
+        self.assertEqual(
+            publish["env"]["EXPECTED_PREVIOUS"],
+            "${{ steps.marker.outputs.previous }}",
+        )
+
+        self.assertIn(
+            "--force-with-lease=$ref:$EXPECTED_PREVIOUS",
+            publish["run"],
+        )
+
+    def test_production_rollback_retention(self):
+        workflow = load_workflow(
+            (WORKFLOWS / "update-custom.yml").read_text()
+        )
+
+        promotion = workflow["jobs"]["promote"]
+
+        push = find_step(
+            promotion,
+            "Update custom branch",
+        )
+
+        run = push["run"]
+
+        self.assertIn(
+            'archive_ref="refs/heads/archive/custom-$EXPECTED_CUSTOM_SHA"',
+            run,
+        )
+
+        self.assertIn(
+            '[[ "$displaced" != "$EXPECTED_CUSTOM_SHA" ]]',
+            run,
+        )
+
+        self.assertIn(
+            'CUSTOM_GIT_ROLE=retention authenticated_git push origin',
+            run,
+        )
+
+        self.assertIn(
+            '"$EXPECTED_CUSTOM_SHA:$archive_ref"',
+            run,
+        )
+
+        self.assertIn(
+            '"--force-with-lease=$archive_ref:"',
+            run,
+        )
+
+        self.assertIn(
+            '[[ "$archive_record" != "$expected_archive" ]]',
+            run,
+        )
+
+        production_push = run.index(
+            '"$CANDIDATE_SHA:refs/heads/custom"'
+        )
+
+        retention_push = run.index(
+            'CUSTOM_GIT_ROLE=retention authenticated_git push origin'
+        )
+
+        first_archive_verification = run.index(
+            'test "$archive_record" = "$expected_archive"'
+        )
+
+        final_archive_verification = run.rindex(
+            'test "$archive_record" = "$expected_archive"'
+        )
+
+        production_verification = run.index(
+            'test "$production_record" = "$expected_production"'
+        )
+
+        self.assertLess(
+            retention_push,
+            first_archive_verification,
+        )
+
+        self.assertLess(
+            first_archive_verification,
+            production_push,
+        )
+
+        self.assertLess(
+            production_push,
+            production_verification,
+        )
+
+        self.assertLess(
+            production_push,
+            final_archive_verification,
+        )
+
+        self.assertEqual(
+            promotion["environment"],
+            "noctalia-source-promotion",
+        )
+
+        self.assertEqual(
+            push["env"]["CUSTOM_GIT_ROLE"],
+            "promotion",
+        )
+
     def test_hardened_shell_interpolation(self):
         workflow = load_workflow(
             (WORKFLOWS / "update-custom.yml").read_text()
@@ -395,7 +856,7 @@ class CredentialPolicyTests(unittest.TestCase):
         for name in (
             "upstream-support",
             "rebase-candidate",
-            "prepare",
+            "validate",
             "promote",
         ):
             for step in workflow["jobs"][name]["steps"]:
@@ -462,24 +923,9 @@ GUARDS = {
 EXPLICIT_PERMISSIONS = {}
 
 if POLICY_BRANCH == "control":
-    WRITERS.update({
-        ("update-custom.yml", "validate"): {
-            "contents": "read",
-            "actions": "write",
-        },
-        ("update-custom.yml", "cleanup"): {
-            "contents": "write",
-        },
-    })
-
     GUARDS.update({
         ("update-aur-package.yml", "aur-sync"): UPSTREAM,
-        ("update-custom.yml", "test-custom-token"):
-            FORK_MAIN + " && (github.event_name == "
-            "'workflow_dispatch' && inputs.test_custom_token)",
-        ("update-custom.yml", "check"):
-            FORK_MAIN + " && (github.event_name != "
-            "'workflow_dispatch' || !inputs.test_custom_token)",
+        ("update-custom.yml", "check"): FORK_MAIN,
         ("update-custom.yml", "upstream-support"):
             FORK_MAIN
             + " && needs.check.outputs.changed == 'true'"
@@ -489,16 +935,10 @@ if POLICY_BRANCH == "control":
             FORK_MAIN
             + " && needs.check.outputs.changed == 'true'"
             + " && needs.check.outputs.upstream_support != 'true'",
-        ("update-custom.yml", "prepare"): FORK_MAIN,
         ("update-custom.yml", "validate"): FORK_MAIN,
         ("update-custom.yml", "promote"): FORK_MAIN,
-        ("update-custom.yml", "cleanup"):
-            FORK_MAIN + " && (always() && "
-            "needs.prepare.result == 'success')",
         ("update-custom.yml", "notify"):
             "always() && " + FORK_MAIN + " && ("
-            " (github.event_name != 'workflow_dispatch' || "
-            "!inputs.test_custom_token) && ("
             " (github.event_name == 'workflow_dispatch' && "
             "inputs.test_pushover == true) ||"
             " needs.check.result == 'failure' ||"
@@ -508,19 +948,17 @@ if POLICY_BRANCH == "control":
             " needs.check.outputs.support_already_reported != 'true'"
             " ) ||"
             " needs.rebase-candidate.result == 'failure' ||"
-            " needs.prepare.result == 'failure' ||"
             " needs.validate.result == 'failure' ||"
-            " needs.promote.result == 'failure' ) )",
+            " needs.promote.result == 'failure' )",
     })
 
     EXPLICIT_PERMISSIONS.update({
         ("update-custom.yml", name): READ_ONLY
         for name in (
-            "test-custom-token",
             "check",
             "upstream-support",
             "rebase-candidate",
-            "prepare",
+            "validate",
             "promote",
         )
     })

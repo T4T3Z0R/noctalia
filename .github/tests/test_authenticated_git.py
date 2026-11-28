@@ -64,6 +64,7 @@ sys.exit(int(os.environ.get("TEST_GIT_STATUS", "0")))
         "HOME": scratch,
         "LANG": "C",
         "CUSTOM_GIT_TOKEN": token,
+        "CUSTOM_GIT_ROLE": "marker",
         "GITHUB_REPOSITORY": "T4T3Z0R/noctalia",
         "GITHUB_REF": "refs/heads/main",
         "TEST_DESTINATION":
@@ -93,10 +94,20 @@ sys.exit(int(os.environ.get("TEST_GIT_STATUS", "0")))
             timeout=60,
         )
 
-    command = (
-        "authenticated_git push origin "
-        "HEAD:refs/heads/automation/synthetic-test"
-    )
+    candidate_ref = "refs/heads/automation/custom-candidate"
+    marker_ref = "refs/heads/automation/upstream-tablet-detected"
+    promotion_ref = "refs/heads/custom"
+
+    revision = "a" * 40
+    previous = "b" * 40
+
+    def push_command(ref, expected="", source=revision):
+        return (
+            f"authenticated_git push origin {source}:{ref} "
+            f"--force-with-lease={ref}:{expected}"
+        )
+
+    command = push_command(marker_ref)
 
     result = invoke(command)
 
@@ -108,7 +119,8 @@ sys.exit(int(os.environ.get("TEST_GIT_STATUS", "0")))
     assert data["args"] == [
         "push",
         "origin",
-        "HEAD:refs/heads/automation/synthetic-test",
+        f"{revision}:{marker_ref}",
+        f"--force-with-lease={marker_ref}:",
     ]
 
     configuration = data["environment"]
@@ -203,6 +215,115 @@ sys.exit(int(os.environ.get("TEST_GIT_STATUS", "0")))
 
     print("PASS: Unsupported authentication operations rejected.")
 
+    for role, ref, expected in (
+        ("marker", marker_ref, ""),
+        ("marker", marker_ref, previous),
+        ("promotion", promotion_ref, previous),
+    ):
+        result = invoke(
+            push_command(ref, expected),
+            {"CUSTOM_GIT_ROLE": role},
+        )
+
+        assert result.returncode == 0, (
+            role, result.stderr
+        )
+
+        assert receipt.exists()
+
+    print("PASS: Three authorized mutation operations.")
+
+    archive_ref = f"refs/heads/archive/custom-{revision}"
+
+    result = invoke(
+        push_command(archive_ref),
+        {"CUSTOM_GIT_ROLE": "retention"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert receipt.exists()
+
+    print("PASS: Exact create-only retention operation authorized.")
+
+    denied = [
+
+        ("retention", push_command(archive_ref, previous)),
+        ("retention", push_command(archive_ref, source="")),
+        ("retention", push_command(archive_ref, previous, source="")),
+        ("retention", push_command(archive_ref, source=previous)),
+        ("retention", push_command("refs/heads/archive/custom-invalid")),
+        ("retention", push_command("refs/heads/archive/arbitrary")),
+        ("retention", push_command(marker_ref)),
+        ("retention", push_command(candidate_ref)),
+        ("retention", push_command(promotion_ref, previous)),
+        ("retention", push_command("refs/heads/main", previous)),
+        ("retention", push_command("refs/tags/v1.2.3")),
+        ("marker", push_command(archive_ref)),
+        ("promotion", push_command(archive_ref)),
+        ("", command),
+        ("unknown", command),
+        ("candidate", push_command(candidate_ref)),
+        ("candidate", push_command(candidate_ref, previous)),
+        ("candidate", push_command(candidate_ref, previous, source="")),
+        ("candidate", push_command(marker_ref)),
+        ("candidate", push_command(promotion_ref, previous)),
+        ("marker", push_command(candidate_ref)),
+        ("marker", push_command(candidate_ref, previous, source="")),
+        ("marker", push_command(promotion_ref, previous)),
+        ("marker", push_command(marker_ref, source="HEAD")),
+        ("marker", push_command(marker_ref, "invalid")),
+        ("marker", push_command(marker_ref, source="")),
+        ("marker", push_command(marker_ref, previous, source="")),
+        ("marker", push_command("refs/heads/arbitrary")),
+        ("marker", push_command("refs/heads/main", previous)),
+        ("marker", push_command("refs/tags/v1.2.3")),
+        ("marker", push_command(marker_ref, source="*")),
+        ("marker", command + " --force"),
+        (
+            "marker",
+            f"authenticated_git push origin "
+            f"{revision}:{marker_ref} --force",
+        ),
+        (
+            "marker",
+            f"authenticated_git push origin "
+            f"{revision}:{marker_ref}",
+        ),
+        (
+            "marker",
+            f"authenticated_git push origin "
+            f"{revision}:{marker_ref} "
+            f"--force-with-lease={promotion_ref}:",
+        ),
+        (
+            "marker",
+            f"authenticated_git push origin "
+            f"--delete {marker_ref}",
+        ),
+        ("promotion", push_command(promotion_ref)),
+        ("promotion", push_command(promotion_ref, previous, source="")),
+        ("promotion", push_command(candidate_ref)),
+        ("promotion", push_command(marker_ref, previous)),
+        ("promotion", push_command("refs/heads/main", previous)),
+        ("promotion", push_command("refs/tags/v1.2.3", previous)),
+    ]
+
+    for role, mutation in denied:
+        result = invoke(
+            mutation,
+            {"CUSTOM_GIT_ROLE": role},
+        )
+
+        assert result.returncode != 0, (
+            role, mutation, result.stdout
+        )
+
+        assert not receipt.exists(), (
+            role, mutation
+        )
+
+    print(f"PASS: All {len(denied)} unauthorized mutations rejected.")
+
     result = invoke(command, {
         "TEST_GIT_STATUS": "17",
     })
@@ -211,5 +332,5 @@ sys.exit(int(os.environ.get("TEST_GIT_STATUS", "0")))
 
     print("PASS: Git failure status preserved.")
 
-print("PASS: All nine authentication boundary checks.")
+print("PASS: Authentication and role boundary qualification.")
 print("No real remote operations or credentials used.")

@@ -39,7 +39,7 @@ jobs:
 
       - name: Checkout workflow definitions
         id: checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
 
@@ -81,3 +81,157 @@ jobs:
             printf '\n=== %s ===\n' "$test_file"
             python3 -I -B "$test_file"
           done
+
+      - name: Qualify native Git discovery and transactions
+        if: ${{ success() && !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 -I -B \
+            .github/tests/native_git_transactions.py
+
+  native-candidate-validation:
+    name: Native candidate execution isolation
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout qualification revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify native execution prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker version
+          git --version
+          python3 --version
+
+      - name: Qualify isolated candidate execution
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+          python3 -I -B \
+            .github/tests/native_candidate_validation.py
+
+  artifact-transport-producer:
+    name: Produce immutable qualification artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    permissions: {}
+
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      payload_sha256: ${{ steps.payload.outputs.sha256 }}
+
+    steps:
+      - name: Create synthetic transport payload
+        id: payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+
+          mkdir "$RUNNER_TEMP/transport-fixture"
+
+          printf '%s\n' \
+            "transport-fixture:$GITHUB_SHA:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
+            > "$RUNNER_TEMP/transport-fixture/candidate.bundle"
+
+          digest="$(
+            sha256sum < "$RUNNER_TEMP/transport-fixture/candidate.bundle"
+          )"
+
+          printf 'sha256=%s\n' "${digest%% *}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload exact qualification artifact
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: transport-fixture-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/transport-fixture/candidate.bundle
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Create distinct unrelated payload
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf '%s\n' 'deliberately-unrelated-payload' \
+            > "$RUNNER_TEMP/transport-fixture/candidate.bundle"
+
+      - name: Upload deliberately unrelated artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: unrelated-fixture-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/transport-fixture/candidate.bundle
+          if-no-files-found: error
+          retention-days: 1
+
+  artifact-transport-consumer:
+    name: Verify exact artifact ID retrieval
+    needs: artifact-transport-producer
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    permissions: {}
+
+    steps:
+      - name: Require exact qualification identity
+        shell: bash
+        env:
+          ARTIFACT_ID: ${{ needs.artifact-transport-producer.outputs.artifact_id }}
+        run: |
+          set -euo pipefail
+          [[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+
+      - name: Download only the selected artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ needs.artifact-transport-producer.outputs.artifact_id }}
+          path: ${{ runner.temp }}/received-fixture
+
+      - name: Verify exact retrieved payload
+        shell: bash
+        env:
+          EXPECTED_SHA256: ${{ needs.artifact-transport-producer.outputs.payload_sha256 }}
+        run: |
+          set -euo pipefail
+
+          [[ "$EXPECTED_SHA256" =~ ^[0-9a-f]{64}$ ]]
+
+          directory="$RUNNER_TEMP/received-fixture"
+
+          entries="$(find "$directory" -mindepth 1 -printf '%P\n')"
+
+          test "$entries" = candidate.bundle
+
+          payload="$directory/candidate.bundle"
+
+          test -f "$payload"
+          test ! -L "$payload"
+
+          printf '%s  %s\n' \
+            "$EXPECTED_SHA256" "$payload" |
+            sha256sum --strict -c -
+
+          expected="transport-fixture:$GITHUB_SHA:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT"
+
+          test "$(cat "$payload")" = "$expected"
+
+          echo "PASS: Exact artifact selected despite unrelated artifact."
+          echo "PASS: Cross-job payload checksum and identity verified."
