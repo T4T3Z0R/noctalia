@@ -1,0 +1,57 @@
+name: Lint custom workflows
+
+on:
+  push:
+    branches:
+      - custom
+      - feature/remediation-w01-custom
+    paths:
+      - '.github/workflows/**'
+      - '.github/tests/**'
+  pull_request:
+    branches:
+      - custom
+    paths:
+      - '.github/workflows/**'
+      - '.github/tests/**'
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Validate custom checkout credential policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    container:
+      image: archlinux:latest
+
+    steps:
+      - name: Install workflow validation tools
+        id: install
+        run: |
+          pacman -Syu --noconfirm --needed \
+            git actionlint shellcheck python python-yaml
+
+      - name: Checkout workflow definitions
+        id: checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Validate qualification workflow
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.checkout.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          actionlint -version
+          shellcheck --version
+          actionlint -color .github/workflows/lint-custom-workflows.yml
+
+      - name: Run checkout credential regression
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.checkout.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I -B .github/tests/test_workflow_credentials.py

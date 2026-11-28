@@ -20,6 +20,7 @@ jobs:
       - name: Check out release tag
         uses: actions/checkout@v6
         with:
+          persist-credentials: false
           fetch-depth: 0 # release notes need full history and tags
 
       - name: Validate release tag

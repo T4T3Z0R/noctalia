@@ -20,6 +20,7 @@ concurrency:
 
 jobs:
   intake:
+    if: ${{ github.repository == 'noctalia-dev/noctalia' }}
     runs-on: ubuntu-latest
     steps:
       # Short-lived token from the Noctalia Automation GitHub App (org variable

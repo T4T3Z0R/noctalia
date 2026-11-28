@@ -12,6 +12,9 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   cache:
     strategy:
@@ -21,6 +24,8 @@ jobs:
     if: ${{ github.repository == 'noctalia-dev/noctalia' }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: cachix/install-nix-action@v31
       - uses: cachix/cachix-action@v17
         with:
@@ -29,6 +34,7 @@ jobs:
       - run: nix build .#default --fallback
 
   push:
+    if: ${{ github.repository == 'noctalia-dev/noctalia' }}
     needs: cache
     runs-on: ubuntu-latest
     permissions:
@@ -36,6 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          persist-credentials: true
           fetch-depth: 0
       - name: push to cachix branch
         run: |

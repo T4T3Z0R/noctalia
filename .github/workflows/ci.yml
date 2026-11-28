@@ -10,6 +10,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   format:
     name: clang-format
@@ -24,6 +27,8 @@ jobs:
           clang-format --version | grep -q 'version 23\.' || { clang-format --version; echo "error: expected clang-format 23" >&2; exit 1; }
 
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Check formatting
         run: just format-code-check
@@ -42,6 +47,8 @@ jobs:
           pacman -Syu --noconfirm --needed git just nodejs npm
 
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Check formatting
         run: just format-docs-check
@@ -70,6 +77,8 @@ jobs:
             jemalloc just clang
 
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       # Meson picks up ccache automatically. Only pushes to main save the cache, so
       # PR runs reuse it without evicting each other from the repository quota.
@@ -108,6 +117,8 @@ jobs:
       - *arch-deps
 
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Check clang-tidy version
         run: |
@@ -142,6 +153,8 @@ jobs:
             jemalloc-devel
 
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - *ccache-env
 
