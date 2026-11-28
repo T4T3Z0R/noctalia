@@ -55,11 +55,11 @@ authenticated_git() {
 
     GIT_CONFIG_COUNT=5 \
         GIT_CONFIG_KEY_0=http.https://github.com/.extraheader \
-        GIT_CONFIG_VALUE_0= \
+        GIT_CONFIG_VALUE_0='' \
         GIT_CONFIG_KEY_1=http.https://github.com/.extraheader \
         GIT_CONFIG_VALUE_1="AUTHORIZATION: basic ${authorization}" \
         GIT_CONFIG_KEY_2=credential.helper \
-        GIT_CONFIG_VALUE_2= \
+        GIT_CONFIG_VALUE_2='' \
         GIT_CONFIG_KEY_3=core.hooksPath \
         GIT_CONFIG_VALUE_3=/dev/null \
         GIT_CONFIG_KEY_4=http.followRedirects \
