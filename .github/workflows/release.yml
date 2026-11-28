@@ -5,15 +5,16 @@ on:
     tags:
       - 'v*'
 
-permissions:
-  contents: write
-
+permissions: {}
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   release:
+    if: ${{ github.repository == 'noctalia-dev/noctalia' }}
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
 
     steps:

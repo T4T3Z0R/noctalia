@@ -12,6 +12,7 @@ concurrency:
   group: enforce-pr-template-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+permissions: {}
 jobs:
   enforce:
     if: ${{ github.repository == 'noctalia-dev/noctalia' }}

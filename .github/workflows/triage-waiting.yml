@@ -6,15 +6,15 @@ on:
   issue_comment:
     types: [created]
 
-permissions:
-  issues: write
-
+permissions: {}
 concurrency:
   group: triage-waiting-${{ github.event.issue.number }}
   cancel-in-progress: false
 
 jobs:
   waiting:
+    permissions:
+      issues: write
     if: ${{ github.repository == 'noctalia-dev/noctalia' && !github.event.issue.pull_request }}
     runs-on: ubuntu-latest
     steps:

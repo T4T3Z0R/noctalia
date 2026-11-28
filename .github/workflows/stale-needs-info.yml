@@ -10,11 +10,11 @@ on:
         type: boolean
         default: true
 
-permissions:
-  issues: write
-
+permissions: {}
 jobs:
   stale:
+    permissions:
+      issues: write
     if: ${{ github.repository == 'noctalia-dev/noctalia' }}
     runs-on: ubuntu-latest
     steps:
