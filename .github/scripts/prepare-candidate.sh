@@ -87,7 +87,7 @@ then
     exit 1
 fi
 
-candidate_sha="$(safe_git rev-parse --verify HEAD^{commit})"
+candidate_sha="$(safe_git rev-parse --verify "HEAD^{commit}")"
 
 [[ "$candidate_sha" =~ ^[0-9a-f]{40}$ ]]
 

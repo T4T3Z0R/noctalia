@@ -32,16 +32,19 @@ jobs:
 
     steps:
       - name: Install workflow validation tools
+        id: install
         run: |
           pacman -Syu --noconfirm --needed \
             git actionlint shellcheck python python-yaml
 
       - name: Checkout workflow definitions
+        id: checkout
         uses: actions/checkout@v6
         with:
           persist-credentials: false
 
       - name: Validate control workflows
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.checkout.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -55,6 +58,7 @@ jobs:
             .github/workflows/ci.yml
 
       - name: Validate automation helpers
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.checkout.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -67,6 +71,7 @@ jobs:
           shellcheck -x -P .github/scripts .github/scripts/*.sh
 
       - name: Run automation regression tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.checkout.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
