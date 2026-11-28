@@ -70,6 +70,14 @@ with tempfile.TemporaryDirectory() as temporary:
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_ALLOW_PROTOCOL": "file",
+
+        # GitHub's container job can run under a different
+        # UID from the mounted control checkout. Preserve
+        # configuration isolation while trusting only that
+        # exact checkout, never arbitrary repositories.
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "safe.directory",
+        "GIT_CONFIG_VALUE_0": str(ROOT),
     }
 
     def execute(args, cwd=None, environment=None):
