@@ -18,6 +18,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   format:
     name: clang-format
@@ -30,6 +33,8 @@ jobs:
           pacman -Syu --noconfirm --needed git clang
 
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Check formatting
         run: |
@@ -59,6 +64,8 @@ jobs:
             jemalloc just clang
 
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Build
         run: just build

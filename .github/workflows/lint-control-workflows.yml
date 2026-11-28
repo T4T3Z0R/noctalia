@@ -5,17 +5,18 @@ on:
     branches:
       - main
       - 'fix/**'
+      - feature/remediation-w01-control
     paths:
-      - '.github/workflows/update-custom.yml'
-      - '.github/workflows/lint-control-workflows.yml'
-      - '.github/workflows/ci.yml'
+      - '.github/workflows/**'
+      - '.github/scripts/**'
+      - '.github/tests/**'
   pull_request:
     branches:
       - main
     paths:
-      - '.github/workflows/update-custom.yml'
-      - '.github/workflows/lint-control-workflows.yml'
-      - '.github/workflows/ci.yml'
+      - '.github/workflows/**'
+      - '.github/scripts/**'
+      - '.github/tests/**'
 
 permissions:
   contents: read
@@ -33,7 +34,7 @@ jobs:
       - name: Install workflow validation tools
         run: |
           pacman -Syu --noconfirm --needed \
-            git actionlint shellcheck
+            git actionlint shellcheck python python-yaml
 
       - name: Checkout workflow definitions
         uses: actions/checkout@v6
@@ -52,3 +53,26 @@ jobs:
             .github/workflows/update-custom.yml \
             .github/workflows/lint-control-workflows.yml \
             .github/workflows/ci.yml
+
+      - name: Validate automation helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for helper in .github/scripts/*.sh
+          do
+            bash -n "$helper"
+          done
+
+          shellcheck -x -P .github/scripts .github/scripts/*.sh
+
+      - name: Run automation regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for test_file in .github/tests/test_*.py
+          do
+            printf '\n=== %s ===\n' "$test_file"
+            python3 -I -B "$test_file"
+          done

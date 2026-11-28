@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+# W01-C automation regression qualification.
+# Uses disposable repositories and synthetic credentials.
+# Qualification source: W01-C1.13c-authentication-qualification.txt
+
+from pathlib import Path
+import base64
+import json
+import os
+import subprocess
+import tempfile
+
+helper = Path(
+    ".github/scripts/authenticated-git.sh"
+).resolve()
+
+token = "synthetic-test-credential"
+
+authorization = base64.b64encode(
+    f"x-access-token:{token}".encode()
+).decode()
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = Path(scratch)
+
+    fake_git = root / "git"
+
+    fake_git.write_text(
+        r'''#!/usr/bin/env python3
+import json
+import os
+import sys
+
+assert "CUSTOM_GIT_TOKEN" not in os.environ
+
+args = sys.argv[1:]
+
+if args == ["remote", "get-url", "--push", "--all", "origin"]:
+    assert "GIT_CONFIG_COUNT" not in os.environ
+    print(os.environ["TEST_DESTINATION"])
+    sys.exit(0)
+
+with open(os.environ["TEST_RECEIPT"], "w") as output:
+    json.dump({
+        "args": args,
+        "environment": {
+            key: value
+            for key, value in os.environ.items()
+            if key.startswith("GIT_CONFIG_")
+            or key == "GIT_TERMINAL_PROMPT"
+        },
+    }, output)
+
+sys.exit(int(os.environ.get("TEST_GIT_STATUS", "0")))
+'''
+    )
+
+    fake_git.chmod(0o700)
+
+    receipt = root / "receipt.json"
+
+    base_env = {
+        "PATH": f"{root}:/usr/bin:/bin",
+        "HOME": scratch,
+        "LANG": "C",
+        "CUSTOM_GIT_TOKEN": token,
+        "GITHUB_REPOSITORY": "T4T3Z0R/noctalia",
+        "GITHUB_REF": "refs/heads/main",
+        "TEST_DESTINATION":
+            "https://github.com/T4T3Z0R/noctalia.git",
+        "TEST_RECEIPT": str(receipt),
+    }
+
+    def invoke(command, overrides=None):
+        receipt.unlink(missing_ok=True)
+
+        env = dict(base_env)
+        env.update(overrides or {})
+
+        return subprocess.run(
+            [
+                "bash", "-c",
+                'set -euo pipefail\n'
+                'source "$1"\n'
+                'shift\n'
+                + command,
+                "test",
+                str(helper),
+            ],
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
+
+    command = (
+        "authenticated_git push origin "
+        "HEAD:refs/heads/automation/synthetic-test"
+    )
+
+    result = invoke(command)
+
+    assert result.returncode == 0, result.stderr
+    assert receipt.exists()
+
+    data = json.loads(receipt.read_text())
+
+    assert data["args"] == [
+        "push",
+        "origin",
+        "HEAD:refs/heads/automation/synthetic-test",
+    ]
+
+    configuration = data["environment"]
+
+    assert configuration["GIT_CONFIG_COUNT"] == "5"
+    assert configuration["GIT_CONFIG_VALUE_0"] == ""
+    assert configuration["GIT_CONFIG_VALUE_1"] == (
+        f"AUTHORIZATION: basic {authorization}"
+    )
+    assert configuration["GIT_CONFIG_VALUE_2"] == ""
+    assert configuration["GIT_CONFIG_VALUE_3"] == "/dev/null"
+    assert configuration["GIT_CONFIG_VALUE_4"] == "false"
+    assert configuration["GIT_TERMINAL_PROMPT"] == "0"
+
+    assert result.stdout == (
+        f"::add-mask::{authorization}\n"
+    )
+
+    print("PASS: Authorized push configuration.")
+
+    result = invoke(
+        command
+        + "\n"
+        + "test -z \"${GIT_CONFIG_COUNT+x}\"\n"
+        + "test -z \"$(env | grep '^CUSTOM_GIT_TOKEN=' || true)\""
+    )
+
+    assert result.returncode == 0, result.stderr
+
+    print("PASS: Authentication configuration does not persist.")
+    print("PASS: Raw token is not exported to child processes.")
+
+    result = invoke(command, {
+        "CUSTOM_GIT_TOKEN": "",
+    })
+
+    assert result.returncode != 0
+    assert not receipt.exists()
+
+    print("PASS: Missing credential rejected.")
+
+    result = invoke(command, {
+        "GITHUB_REPOSITORY": "untrusted/noctalia",
+    })
+
+    assert result.returncode != 0
+    assert not receipt.exists()
+
+    print("PASS: Incorrect repository rejected.")
+
+    for invalid_ref in (
+        "refs/heads/custom",
+        "refs/heads/automation/custom-candidate",
+        "",
+    ):
+        result = invoke(command, {
+            "GITHUB_REF": invalid_ref,
+        })
+
+        assert result.returncode != 0
+        assert not receipt.exists()
+        assert "Unexpected control execution ref" in result.stderr
+
+    print("PASS: Non-main authentication rejected.")
+
+
+    for destination in (
+        "https://example.invalid/noctalia.git",
+        "https://github.com/other/noctalia.git",
+        "git@github.com:T4T3Z0R/noctalia.git",
+        "https://github.com/T4T3Z0R/noctalia.git\n"
+        "https://example.invalid/second.git",
+    ):
+        result = invoke(command, {
+            "TEST_DESTINATION": destination,
+        })
+
+        assert result.returncode != 0
+        assert not receipt.exists()
+
+    print("PASS: Incorrect and multiple push destinations rejected.")
+
+    for unsupported in (
+        "authenticated_git fetch origin",
+        "authenticated_git push upstream HEAD",
+        "authenticated_git status",
+    ):
+        result = invoke(unsupported)
+
+        assert result.returncode != 0
+        assert not receipt.exists()
+
+    print("PASS: Unsupported authentication operations rejected.")
+
+    result = invoke(command, {
+        "TEST_GIT_STATUS": "17",
+    })
+
+    assert result.returncode == 17
+
+    print("PASS: Git failure status preserved.")
+
+print("PASS: All nine authentication boundary checks.")
+print("No real remote operations or credentials used.")

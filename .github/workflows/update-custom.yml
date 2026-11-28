@@ -34,7 +34,7 @@ env:
 jobs:
   test-custom-token:
     name: Test custom branch credential
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_custom_token }}
+    if: ${{ github.repository == 'T4T3Z0R/noctalia' && github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' && inputs.test_custom_token) }}
     runs-on: ubuntu-latest
 
     steps:
@@ -48,30 +48,38 @@ jobs:
             exit 1
           fi
 
-      - name: Checkout using retained credential
+      - name: Checkout trusted control revision
         uses: actions/checkout@v6
         with:
-          ref: custom
-          token: ${{ secrets.CUSTOM_BRANCH_TOKEN }}
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
 
       - name: Verify temporary branch creation and deletion
         shell: bash
+        env:
+          CUSTOM_GIT_TOKEN: ${{ secrets.CUSTOM_BRANCH_TOKEN }}
         run: |
           set -euo pipefail
+
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          source "$GITHUB_WORKSPACE/.github/scripts/authenticated-git.sh"
+
 
           test "$GITHUB_REPOSITORY" = T4T3Z0R/noctalia
 
           ref="refs/heads/automation/token-test-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          sha="$(git rev-parse HEAD)"
+          git fetch --no-tags origin "refs/heads/custom"
+          sha="$(git rev-parse --verify FETCH_HEAD^{commit})"
 
           test -z "$(git ls-remote --heads origin "$ref")"
 
           cleanup_probe() {
-            git push origin --delete "$ref" \
+            authenticated_git push origin --delete "$ref" \
               --force-with-lease="$ref:$sha"
           }
 
-          git push origin "HEAD:$ref" \
+          authenticated_git push origin "$sha:$ref" \
             --force-with-lease="$ref:"
 
           trap cleanup_probe EXIT
@@ -90,14 +98,16 @@ jobs:
           echo 'PASS: CUSTOM_BRANCH_TOKEN write access verified.'
 
   check:
-    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.test_custom_token }}
+    if: ${{ github.repository == 'T4T3Z0R/noctalia' && github.ref == 'refs/heads/main' && (github.event_name != 'workflow_dispatch' || !inputs.test_custom_token) }}
     name: Check upstream release
     runs-on: ubuntu-latest
 
     outputs:
       changed: ${{ steps.check.outputs.changed }}
       current_tag: ${{ steps.check.outputs.current_tag }}
+      current_base_sha: ${{ steps.check.outputs.current_base_sha }}
       latest_tag: ${{ steps.check.outputs.latest_tag }}
+      latest_sha: ${{ steps.check.outputs.latest_sha }}
       custom_sha: ${{ steps.check.outputs.custom_sha }}
       upstream_support: ${{ steps.check.outputs.upstream_support }}
       support_already_reported: ${{ steps.check.outputs.support_already_reported }}
@@ -106,6 +116,8 @@ jobs:
       - name: Checkout control branch
         uses: actions/checkout@v6
         with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Compare releases
@@ -131,6 +143,9 @@ jobs:
               --jq '.tag_name'
           )"
 
+          [[ "$latest_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git check-ref-format "refs/tags/$latest_tag"
+
           current_tag="$(
             git describe \
               --tags \
@@ -138,12 +153,19 @@ jobs:
               "origin/${CUSTOM_BRANCH}"
           )"
 
+          [[ "$current_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git check-ref-format "refs/tags/$current_tag"
+
+          current_base_sha="$(
+            git rev-parse --verify "refs/tags/${current_tag}^{commit}"
+          )"
+
           custom_sha="$(
             git rev-parse "origin/${CUSTOM_BRANCH}"
           )"
 
           latest_sha="$(
-            git rev-list -n 1 "${latest_tag}"
+            git rev-parse --verify "refs/tags/${latest_tag}^{commit}"
           )"
 
           changed=false
@@ -183,7 +205,9 @@ jobs:
           {
             echo "changed=${changed}"
             echo "current_tag=${current_tag}"
+            echo "current_base_sha=${current_base_sha}"
             echo "latest_tag=${latest_tag}"
+            echo "latest_sha=${latest_sha}"
             echo "custom_sha=${custom_sha}"
             echo "upstream_support=${upstream_support}"
             echo "support_already_reported=${support_already_reported}"
@@ -203,108 +227,329 @@ jobs:
     needs: check
 
     if: >-
+      github.repository == 'T4T3Z0R/noctalia' &&
+      github.ref == 'refs/heads/main' &&
       needs.check.outputs.changed == 'true' &&
       needs.check.outputs.upstream_support == 'true' &&
       needs.check.outputs.support_already_reported != 'true'
 
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read
+
     steps:
-      - name: Checkout repository
+      - name: Checkout trusted control revision
         uses: actions/checkout@v6
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
-          token: ${{ secrets.CUSTOM_BRANCH_TOKEN }}
+          persist-credentials: false
 
-      - name: Record detected upstream release
+      - name: Resolve detected upstream release
+        id: marker
+        env:
+          LATEST_TAG: ${{ needs.check.outputs.latest_tag }}
+          EXPECTED_SHA: ${{ needs.check.outputs.latest_sha }}
         run: |
           set -euo pipefail
 
-          git remote add upstream \
-            "https://github.com/${UPSTREAM_REPO}.git" 2>/dev/null \
-            || git remote set-url upstream \
-              "https://github.com/${UPSTREAM_REPO}.git"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
-          git fetch --force upstream \
-            "refs/tags/${{ needs.check.outputs.latest_tag }}:refs/tags/${{ needs.check.outputs.latest_tag }}"
+          [[ "$LATEST_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
 
-          latest_sha="$(
-            git rev-list -n 1 \
-              "${{ needs.check.outputs.latest_tag }}"
-          )"
+          git check-ref-format "refs/tags/$LATEST_TAG"
 
-          if [[ "${{ needs.check.outputs.upstream_support }}" == "true" ]]; then
-            git push --force origin \
-              "${latest_sha}:refs/heads/${TABLET_MARKER_BRANCH}"
-          fi
+          git fetch --no-tags \
+            "https://github.com/${UPSTREAM_REPO}.git" \
+            "refs/tags/${LATEST_TAG}"
+
+          latest_sha="$(git rev-parse --verify FETCH_HEAD^{commit})"
+
+          test "$latest_sha" = "$EXPECTED_SHA"
+
+          printf 'sha=%s\n' "$latest_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Record exact upstream marker
+        env:
+          CUSTOM_GIT_TOKEN: ${{ secrets.CUSTOM_BRANCH_TOKEN }}
+          MARKER_SHA: ${{ steps.marker.outputs.sha }}
+          EXPECTED_SHA: ${{ needs.check.outputs.latest_sha }}
+        run: |
+          set -euo pipefail
+
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          source "$GITHUB_WORKSPACE/.github/scripts/authenticated-git.sh"
+
+          [[ "$MARKER_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$MARKER_SHA" = "$EXPECTED_SHA"
+          test "$TABLET_MARKER_BRANCH" = automation/upstream-tablet-detected
+
+          test "$(git cat-file -t "$MARKER_SHA")" = commit
+
+          authenticated_git push origin \
+            --force "${MARKER_SHA}:refs/heads/${TABLET_MARKER_BRANCH}"
 
       - name: Stop for manual review
+        env:
+          LATEST_TAG: ${{ needs.check.outputs.latest_tag }}
         run: |
-          if [[ "${{ needs.check.outputs.upstream_support }}" == "true" ]]; then
-            echo "::error::Upstream ${{ needs.check.outputs.latest_tag }} appears to contain tablet-v2 support. The custom pen patch may no longer be needed."
-          fi
+          set -euo pipefail
+
+          [[ "$LATEST_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+
+          printf '::error::Upstream %s appears to contain tablet-v2 support. The custom pen patch may no longer be needed.\n' \
+            "$LATEST_TAG"
 
           exit 1
 
-  prepare:
-    name: Rebase candidate
+  rebase-candidate:
+    name: Prepare credential-free candidate
     needs: check
 
     if: >-
+      github.repository == 'T4T3Z0R/noctalia' &&
+      github.ref == 'refs/heads/main' &&
       needs.check.outputs.changed == 'true' &&
       needs.check.outputs.upstream_support != 'true'
 
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents: read
 
     outputs:
       candidate_sha: ${{ steps.rebase.outputs.candidate_sha }}
+      bundle_sha256: ${{ steps.rebase.outputs.bundle_sha256 }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
 
     steps:
-      - name: Checkout custom branch
+      - name: Checkout trusted control revision
         uses: actions/checkout@v6
         with:
-          ref: ${{ env.CUSTOM_BRANCH }}
-          fetch-depth: 0
-          token: ${{ secrets.CUSTOM_BRANCH_TOKEN }}
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
-      - name: Rebase onto new release
+      - name: Prepare exact candidate and export bundle
         id: rebase
+        env:
+          CUSTOM_SHA: ${{ needs.check.outputs.custom_sha }}
+          CURRENT_BASE_SHA: ${{ needs.check.outputs.current_base_sha }}
+          LATEST_SHA: ${{ needs.check.outputs.latest_sha }}
+          LATEST_TAG: ${{ needs.check.outputs.latest_tag }}
         run: |
           set -euo pipefail
 
-          git config user.name "github-actions[bot]"
-          git config user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
-          git remote add upstream \
-            "https://github.com/${UPSTREAM_REPO}.git" 2>/dev/null \
-            || git remote set-url upstream \
-              "https://github.com/${UPSTREAM_REPO}.git"
+          for revision in "$CUSTOM_SHA" "$CURRENT_BASE_SHA" "$LATEST_SHA"
+          do
+            [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
+          done
 
-          git fetch --force upstream \
-            'refs/tags/*:refs/tags/*'
+          [[ "$LATEST_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
 
-          git rebase \
-            --onto "${{ needs.check.outputs.latest_tag }}" \
-            "${{ needs.check.outputs.current_tag }}"
+          control="$GITHUB_WORKSPACE/.github/scripts"
+
+          scratch="$(mktemp -d "$RUNNER_TEMP/candidate-preparation.XXXXXXXX")"
+
+          trap 'rm -rf -- "$scratch"' EXIT
+
+          mkdir -m 700 "$scratch/home" "$scratch/repository"
+
+          export HOME="$scratch/home"
+          export GIT_CONFIG_NOSYSTEM=1
+          export GIT_CONFIG_GLOBAL=/dev/null
+          export GIT_TERMINAL_PROMPT=0
+
+          unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS
+          unset GIT_TEMPLATE_DIR GIT_EXEC_PATH
+          unset GIT_ASKPASS SSH_ASKPASS
+
+          cd "$scratch/repository"
+
+          git init --template= --initial-branch=workspace
+
+          git -c fetch.fsckObjects=true fetch --no-tags \
+            https://github.com/T4T3Z0R/noctalia.git \
+            refs/heads/custom
+
+          test "$(git rev-parse --verify FETCH_HEAD^{commit})" = "$CUSTOM_SHA"
+
+          git -c fetch.fsckObjects=true fetch --no-tags \
+            https://github.com/noctalia-dev/noctalia.git \
+            "refs/tags/$LATEST_TAG"
+
+          test "$(git rev-parse --verify FETCH_HEAD^{commit})" = "$LATEST_SHA"
+
+          test "$(git cat-file -t "$CURRENT_BASE_SHA")" = commit
 
           candidate_sha="$(
-            git rev-parse HEAD
+            bash "$control/prepare-candidate.sh" \
+              "$CUSTOM_SHA" "$CURRENT_BASE_SHA" "$LATEST_SHA"
           )"
 
-          echo "candidate_sha=${candidate_sha}" \
-            >> "${GITHUB_OUTPUT}"
+          [[ "$candidate_sha" =~ ^[0-9a-f]{40}$ ]]
 
-          git push --force origin \
-            "HEAD:refs/heads/${CANDIDATE_BRANCH}"
+          artifact_dir="$RUNNER_TEMP/candidate-transfer"
+
+          mkdir -m 700 "$artifact_dir"
+
+          bundle_sha256="$(
+            bash "$control/candidate-bundle.sh" export \
+              "$artifact_dir/candidate.bundle" \
+              "$candidate_sha" "$LATEST_SHA" -
+          )"
+
+          [[ "$bundle_sha256" =~ ^[0-9a-f]{64}$ ]]
 
           {
-            echo '## Candidate prepared'
-            echo
-            echo "- Old base: \`${{ needs.check.outputs.current_tag }}\`"
-            echo "- New base: \`${{ needs.check.outputs.latest_tag }}\`"
-            echo "- Candidate: \`${candidate_sha}\`"
-          } >> "${GITHUB_STEP_SUMMARY}"
+            printf 'candidate_sha=%s\n' "$candidate_sha"
+            printf 'bundle_sha256=%s\n' "$bundle_sha256"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload exact candidate bundle
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: noctalia-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/candidate-transfer/candidate.bundle
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  prepare:
+    name: Publish prepared candidate
+    needs:
+      - check
+      - rebase-candidate
+
+    if: >-
+      github.repository == 'T4T3Z0R/noctalia' &&
+      github.ref == 'refs/heads/main'
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+
+    outputs:
+      candidate_sha: ${{ steps.publish.outputs.candidate_sha }}
+
+    steps:
+      - name: Checkout trusted control revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download exact candidate bundle
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.rebase-candidate.outputs.artifact_id }}
+          path: ${{ runner.temp }}/candidate-transfer
+
+      - name: Verify and import candidate objects
+        id: receive
+        env:
+          CANDIDATE_SHA: ${{ needs.rebase-candidate.outputs.candidate_sha }}
+          BUNDLE_SHA256: ${{ needs.rebase-candidate.outputs.bundle_sha256 }}
+          LATEST_SHA: ${{ needs.check.outputs.latest_sha }}
+          LATEST_TAG: ${{ needs.check.outputs.latest_tag }}
+        run: |
+          set -euo pipefail
+
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$LATEST_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BUNDLE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$LATEST_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+
+          control="$GITHUB_WORKSPACE/.github/scripts"
+          artifact_dir="$RUNNER_TEMP/candidate-transfer"
+
+          test "$(find "$artifact_dir" -mindepth 1 -printf '%P\n')" = candidate.bundle
+
+          scratch="$RUNNER_TEMP/candidate-receiver"
+
+          mkdir -m 700 "$scratch"
+          mkdir -m 700 "$scratch/home" "$scratch/repository"
+
+          export HOME="$scratch/home"
+          export GIT_CONFIG_NOSYSTEM=1
+          export GIT_CONFIG_GLOBAL=/dev/null
+          export GIT_TERMINAL_PROMPT=0
+
+          unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS
+          unset GIT_TEMPLATE_DIR GIT_EXEC_PATH
+          unset GIT_ASKPASS SSH_ASKPASS
+
+          cd "$scratch/repository"
+
+          git init --bare --template=
+
+          git -c fetch.fsckObjects=true fetch --no-tags \
+            https://github.com/noctalia-dev/noctalia.git \
+            "refs/tags/$LATEST_TAG"
+
+          test "$(git rev-parse --verify FETCH_HEAD^{commit})" = "$LATEST_SHA"
+
+          actual="$(
+            bash "$control/candidate-bundle.sh" import \
+              "$artifact_dir/candidate.bundle" \
+              "$CANDIDATE_SHA" "$LATEST_SHA" "$BUNDLE_SHA256"
+          )"
+
+          test "$actual" = "$CANDIDATE_SHA"
+
+          git remote add origin \
+            https://github.com/T4T3Z0R/noctalia.git
+
+          printf 'candidate_sha=%s\n' "$actual" >> "$GITHUB_OUTPUT"
+
+      - name: Publish exact candidate reference
+        id: publish
+        env:
+          CUSTOM_GIT_TOKEN: ${{ secrets.CUSTOM_BRANCH_TOKEN }}
+          CANDIDATE_SHA: ${{ steps.receive.outputs.candidate_sha }}
+          EXPECTED_SHA: ${{ needs.rebase-candidate.outputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          source "$GITHUB_WORKSPACE/.github/scripts/authenticated-git.sh"
+
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CANDIDATE_SHA" = "$EXPECTED_SHA"
+          test "$CANDIDATE_BRANCH" = automation/custom-candidate
+
+          scratch="$RUNNER_TEMP/candidate-receiver"
+
+          export HOME="$scratch/home"
+          export GIT_CONFIG_NOSYSTEM=1
+          export GIT_CONFIG_GLOBAL=/dev/null
+          export GIT_TERMINAL_PROMPT=0
+
+          unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS
+          unset GIT_TEMPLATE_DIR GIT_EXEC_PATH
+          unset GIT_ASKPASS SSH_ASKPASS
+
+          cd "$scratch/repository"
+
+          test "$(git rev-parse --is-bare-repository)" = true
+
+          actual="$(git rev-parse --verify refs/heads/remediation-transfer^{commit})"
+
+          test "$actual" = "$CANDIDATE_SHA"
+
+          authenticated_git push origin \
+            --force "${CANDIDATE_SHA}:refs/heads/${CANDIDATE_BRANCH}"
+
+          printf 'candidate_sha=%s\n' "$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
 
   validate:
     name: Validate candidate source
@@ -402,6 +647,7 @@ jobs:
           fi
 
   promote:
+    if: ${{ github.repository == 'T4T3Z0R/noctalia' && github.ref == 'refs/heads/main' }}
     name: Promote validated candidate
     needs:
       - check
@@ -415,11 +661,22 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          token: ${{ secrets.CUSTOM_BRANCH_TOKEN }}
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Update custom branch
+        env:
+          CUSTOM_GIT_TOKEN: ${{ secrets.CUSTOM_BRANCH_TOKEN }}
+          EXPECTED_CUSTOM_SHA: ${{ needs.check.outputs.custom_sha }}
+          CANDIDATE_SHA: ${{ needs.prepare.outputs.candidate_sha }}
+          LATEST_TAG: ${{ needs.check.outputs.latest_tag }}
+          BUILD_RUN_ID: ${{ needs.validate.outputs.build_run_id }}
         run: |
           set -euo pipefail
+
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          source "$GITHUB_WORKSPACE/.github/scripts/authenticated-git.sh"
+
 
           git fetch origin \
             "${CUSTOM_BRANCH}:refs/remotes/origin/${CUSTOM_BRANCH}" \
@@ -430,8 +687,12 @@ jobs:
               "origin/${CUSTOM_BRANCH}"
           )"
 
-          expected_custom_sha="${{ needs.check.outputs.custom_sha }}"
-          candidate_sha="${{ needs.prepare.outputs.candidate_sha }}"
+          expected_custom_sha="$EXPECTED_CUSTOM_SHA"
+          candidate_sha="$CANDIDATE_SHA"
+
+          [[ "$expected_custom_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$candidate_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
 
           if [[ "${actual_custom_sha}" != "${expected_custom_sha}" ]]; then
             echo "custom moved while the candidate was building."
@@ -441,16 +702,16 @@ jobs:
             exit 1
           fi
 
-          git push origin \
+          authenticated_git push origin \
             "${candidate_sha}:refs/heads/${CUSTOM_BRANCH}" \
             --force-with-lease="refs/heads/${CUSTOM_BRANCH}:${expected_custom_sha}"
 
           {
             echo '## Custom branch updated'
             echo
-            echo "- Release: \`${{ needs.check.outputs.latest_tag }}\`"
+            echo "- Release: \`${LATEST_TAG}\`"
             echo "- Commit: \`${candidate_sha}\`"
-            echo "- Source validation run: \`${{ needs.validate.outputs.build_run_id }}\`"
+            echo "- Source validation run: \`${BUILD_RUN_ID}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
   cleanup:
@@ -460,7 +721,7 @@ jobs:
       - validate
       - promote
 
-    if: always() && needs.prepare.result == 'success'
+    if: ${{ github.repository == 'T4T3Z0R/noctalia' && github.ref == 'refs/heads/main' && (always() && needs.prepare.result == 'success') }}
 
     permissions:
       contents: write
@@ -470,10 +731,21 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Delete temporary candidate
+        env:
+          CUSTOM_GIT_TOKEN: ${{ github.token }}
         run: |
-          git push origin \
+          set -euo pipefail
+
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          source "$GITHUB_WORKSPACE/.github/scripts/authenticated-git.sh"
+
+
+          authenticated_git push origin \
             --delete "${CANDIDATE_BRANCH}" \
             2>/dev/null || true
 
@@ -482,6 +754,7 @@ jobs:
     needs:
       - check
       - upstream-support
+      - rebase-candidate
       - prepare
       - validate
       - promote
@@ -499,6 +772,7 @@ jobs:
           needs.check.outputs.upstream_support == 'true' &&
           needs.check.outputs.support_already_reported != 'true'
         ) ||
+        needs.rebase-candidate.result == 'failure' ||
         needs.prepare.result == 'failure' ||
         needs.validate.result == 'failure' ||
         needs.promote.result == 'failure'
@@ -516,6 +790,7 @@ jobs:
           CURRENT_TAG: ${{ needs.check.outputs.current_tag }}
           LATEST_TAG: ${{ needs.check.outputs.latest_tag }}
           UPSTREAM_SUPPORT: ${{ needs.check.outputs.upstream_support }}
+          REBASE_RESULT: ${{ needs.rebase-candidate.result }}
           PREPARE_RESULT: ${{ needs.prepare.result }}
           VALIDATE_RESULT: ${{ needs.validate.result }}
           PROMOTE_RESULT: ${{ needs.promote.result }}
@@ -540,7 +815,7 @@ jobs:
           elif [[ "${UPSTREAM_SUPPORT}" == "true" ]]; then
             title="Noctalia upstream tablet support"
             message="Upstream ${LATEST_TAG} appears to contain tablet-v2 support. The custom pen patch was left unchanged and needs manual review."
-          elif [[ "${PREPARE_RESULT}" == "failure" ]]; then
+          elif [[ "${REBASE_RESULT}" == "failure" || "${PREPARE_RESULT}" == "failure" ]]; then
             title="Noctalia custom update FAILED"
             message="Rebase onto ${LATEST_TAG} failed. The existing custom branch remains unchanged."
           elif [[ "${VALIDATE_RESULT}" == "failure" ]]; then

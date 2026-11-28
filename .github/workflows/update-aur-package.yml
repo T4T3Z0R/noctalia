@@ -6,8 +6,11 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions: {}
+
 jobs:
   aur-sync:
+    if: ${{ github.repository == 'noctalia-dev/noctalia' }}
     name: Sync PKGBUILD with release
     runs-on: ubuntu-latest
     container:

@@ -17,6 +17,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
+          persist-credentials: false
           fetch-depth: 0 # needed so git describe/git log can see full history and tags
 
       - name: Create release archive
