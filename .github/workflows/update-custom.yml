@@ -554,6 +554,7 @@ jobs:
         with:
           artifact-ids: ${{ needs.rebase-candidate.outputs.artifact_id }}
           path: ${{ runner.temp }}/candidate-transfer
+          merge-multiple: true
 
       - name: Reconstruct exact candidate
         env:
@@ -640,6 +641,7 @@ jobs:
         with:
           artifact-ids: ${{ needs.rebase-candidate.outputs.artifact_id }}
           path: ${{ runner.temp }}/candidate-transfer
+          merge-multiple: true
 
       - name: Independently reconstruct validated candidate
         env:

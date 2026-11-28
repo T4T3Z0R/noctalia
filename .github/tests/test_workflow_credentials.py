@@ -444,6 +444,7 @@ class CredentialPolicyTests(unittest.TestCase):
                     "artifact-ids": expected_id,
                     "path":
                         "${{ runner.temp }}/candidate-transfer",
+                    "merge-multiple": True,
                 },
             )
 

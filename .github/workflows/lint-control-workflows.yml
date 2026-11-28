@@ -204,6 +204,7 @@ jobs:
         with:
           artifact-ids: ${{ needs.artifact-transport-producer.outputs.artifact_id }}
           path: ${{ runner.temp }}/received-fixture
+          merge-multiple: true
 
       - name: Verify exact retrieved payload
         shell: bash

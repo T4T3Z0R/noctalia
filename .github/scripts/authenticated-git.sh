@@ -80,7 +80,7 @@ authenticated_git() {
         return 1
     fi
 
-    expected="${lease#--force-with-lease=$target:}"
+    expected="${lease#--force-with-lease="$target":}"
 
     if [[ -n "$expected" && ! "$expected" =~ ^[0-9a-f]{40}$ ]]; then
         echo "::error::Invalid expected revision." >&2
@@ -97,7 +97,7 @@ authenticated_git() {
         return 1
     fi
 
-    revision="${refspec%:$target}"
+    revision="${refspec%:"$target"}"
 
     if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
         echo "::error::Exact source revision required." >&2
