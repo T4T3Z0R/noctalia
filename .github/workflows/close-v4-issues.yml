@@ -4,14 +4,14 @@ on:
   issues:
     types: [opened, edited]
 
-permissions:
-  contents: read
-  issues: write
-
+permissions: {}
 jobs:
   close-v4-issue:
+    permissions:
+      contents: read
+      issues: write
     runs-on: ubuntu-latest
-    if: github.event.issue.state == 'open'
+    if: ${{ github.repository == 'noctalia-dev/noctalia' && (github.event.issue.state == 'open') }}
     steps:
       - name: Close issues reported against v4
         uses: actions/github-script@v7

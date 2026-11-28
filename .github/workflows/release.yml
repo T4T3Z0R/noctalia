@@ -6,11 +6,12 @@ on:
       - 'v*'
   workflow_dispatch:
 
-permissions:
-  contents: write
-
+permissions: {}
 jobs:
   release:
+    if: ${{ github.repository == 'noctalia-dev/noctalia' }}
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
 
     steps:
